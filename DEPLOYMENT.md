@@ -43,9 +43,49 @@ The health response is JSON and reports whether a refresh is running and the
 result of the last refresh. Docker also checks `/healthz` inside the container
 every 30 seconds.
 
-## Deploy an update
+## Automatic deployment
 
-Build the new image before replacing the running container:
+`kz-replay-autodeploy.timer` checks every two minutes whether `origin/main` has
+moved. If it has, it tags the running image `kz-replay:rollback`, pulls, builds,
+restarts, and waits for `/healthz`. A build failure leaves the old commit and old
+container serving. A container that never turns healthy is rolled back
+automatically.
+
+Pushing to `main` is therefore the whole deployment procedure. The host pulls
+using a read-only deploy key at `/root/.ssh/kz_replay_deploy`, so no credential
+for this machine is stored anywhere off it.
+
+Watch it:
+
+```sh
+systemctl list-timers kz-replay-autodeploy.timer
+journalctl -u kz-replay-autodeploy.service -n 50
+```
+
+Stop deployments without disabling the timer, which is what a long map
+reconversion needs, because replacing the container mid-conversion throws the
+work away:
+
+```sh
+touch /var/lib/kz-replay/.deploy-hold   # pause
+rm /var/lib/kz-replay/.deploy-hold      # resume
+```
+
+The timer also skips any cycle where `/healthz` reports a refresh in progress.
+
+Install or reinstall the units after changing them:
+
+```sh
+install -m 644 /opt/kz-replay/deploy/kz-replay-autodeploy.service \
+  /opt/kz-replay/deploy/kz-replay-autodeploy.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now kz-replay-autodeploy.timer
+```
+
+## Deploy an update by hand
+
+Only needed when the timer is held or broken. Build the new image before
+replacing the running container:
 
 ```sh
 docker compose -f docker-compose.prod.yml build --pull
