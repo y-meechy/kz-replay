@@ -51,6 +51,12 @@ restarts, and waits for `/healthz`. A build failure leaves the old commit and ol
 container serving. A container that never turns healthy is rolled back
 automatically.
 
+A commit that fails either way is recorded in
+`/var/lib/kz-replay/.deploy-failed-sha` and not attempted again, because each
+attempt is a full image build and retrying a broken commit every two minutes
+would keep the machine busy for hours. Pushing anything new clears it; so does
+deleting the file.
+
 Pushing to `main` is therefore the whole deployment procedure. The host pulls
 using a read-only deploy key at `/root/.ssh/kz_replay_deploy`, so no credential
 for this machine is stored anywhere off it.
