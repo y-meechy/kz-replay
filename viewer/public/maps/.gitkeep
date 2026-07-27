@@ -1,0 +1,6 @@
+Keeps this directory in the repository.
+
+The Dockerfile copies viewer/public/maps into the image as the seed that a fresh
+data volume is populated from, and converted .glb files are gitignored, so
+without this file the directory does not exist in a clone and the image build
+fails on a COPY that cannot find its source.
