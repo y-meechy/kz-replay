@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CS2KZ replay viewer</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <!-- The front page. Filled in by src/browse.js. -->
+    <main class="browse" id="browse" hidden></main>
+
+    <!-- The player. One canvas, one panel of numbers, one row of controls. -->
+    <div class="watch" id="watch" hidden>
+      <canvas id="stage"></canvas>
+      <div class="active-pov" id="active-pov" hidden>POV · —</div>
+      <button
+        id="stats-toggle"
+        class="button stats-toggle"
+        type="button"
+        aria-controls="stats"
+        aria-expanded="false"
+        aria-label="Open stats"
+      >
+        Stats
+      </button>
+
+      <section class="panel panel--stats is-collapsed" id="stats">
+        <button
+          id="back"
+          class="button button--small button--ghost"
+          type="button"
+        >
+          ← All maps
+        </button>
+
+        <div class="stat stat--wide">
+          <span class="stat__label">Run</span>
+          <span class="stat__value" id="stat-run">—</span>
+        </div>
+        <div class="stat">
+          <span class="stat__label">Time</span>
+          <span class="stat__value stat__value--mono" id="stat-time">0.00</span>
+        </div>
+        <div class="stat">
+          <span class="stat__label">Speed</span>
+          <span class="stat__value stat__value--mono" id="stat-speed">0</span>
+        </div>
+        <div class="stat">
+          <span class="stat__label">Teleports</span>
+          <span class="stat__value stat__value--mono" id="stat-teleports"
+            >0</span
+          >
+        </div>
+
+        <label class="toggle">
+          <input type="checkbox" id="map-toggle" disabled />
+          <span>Map geometry</span>
+          <span class="toggle__status" id="map-status">—</span>
+        </label>
+        <button
+          id="map-convert"
+          class="button button--small"
+          type="button"
+          hidden
+        >
+          Convert this map
+        </button>
+
+        <div class="watch-compare" id="watch-compare">
+          <span class="field__label">Compare with replay ID</span>
+          <div class="watch-compare__row">
+            <input
+              class="input"
+              id="watch-compare-id"
+              placeholder="paste replay ID"
+              spellcheck="false"
+            />
+            <button
+              class="button button--small"
+              id="watch-compare-button"
+              type="button"
+            >
+              Compare
+            </button>
+          </div>
+          <div class="watch-compare__error" id="watch-compare-error"></div>
+        </div>
+
+        <div class="compare-error" id="compare-error" hidden></div>
+        <div class="watch-notice" id="watch-notice" hidden></div>
+
+        <!-- Only ever shown while a rival is loaded. -->
+        <div class="compare-live" id="compare-live" hidden>
+          <div class="stat">
+            <span class="stat__label">Gap now</span>
+            <span class="stat__value stat__value--mono" id="stat-delta">—</span>
+          </div>
+          <div class="stat">
+            <span class="stat__label">Apart</span>
+            <span class="stat__value stat__value--mono" id="stat-gap">—</span>
+          </div>
+          <div class="compare__legend">
+            <span
+              ><i class="swatch swatch--you"></i
+              ><span id="legend-you">this run</span></span
+            >
+            <span
+              ><i class="swatch swatch--rival"></i
+              ><span id="legend-rival">rival</span></span
+            >
+          </div>
+          <div class="field">
+            <span class="field__label">Point of view</span>
+            <div class="segmented segmented--pov" id="povs">
+              <button type="button" data-pov="main" id="pov-main">
+                This run
+              </button>
+              <button
+                type="button"
+                data-pov="rival"
+                id="pov-rival"
+                class="is-active"
+              >
+                Rival
+              </button>
+            </div>
+          </div>
+          <button
+            id="analysis-open"
+            class="button button--primary button--wide"
+            type="button"
+          >
+            Full analysis
+          </button>
+        </div>
+      </section>
+
+      <footer class="controls">
+        <button id="play" class="button button--primary" type="button">
+          Pause
+        </button>
+        <div class="scrub-wrap">
+          <input
+            id="scrub"
+            class="scrub"
+            type="range"
+            min="0"
+            max="1000"
+            value="0"
+            step="1"
+          />
+          <!-- Highlight marks sit under the thumb, so a big swing is visible on the
+               timeline itself and can be clicked. -->
+          <div class="marks" id="scrub-marks"></div>
+        </div>
+        <span class="controls__time"
+          ><span id="elapsed">0.00</span> / <span id="total">0.00</span></span
+        >
+        <div class="segmented" id="rates">
+          <button type="button" data-rate="0.25">¼×</button>
+          <button type="button" data-rate="0.5">½×</button>
+          <button type="button" data-rate="1" class="is-active">1×</button>
+          <button type="button" data-rate="2">2×</button>
+        </div>
+        <div class="segmented" id="cameras">
+          <button type="button" data-camera="orbit" class="is-active">
+            Orbit
+          </button>
+          <button type="button" data-camera="follow">Follow</button>
+          <button type="button" data-camera="first-person">Eyes</button>
+        </div>
+        <span class="controls__hint"
+          >space play · ← → step · C camera</span
+        >
+      </footer>
+
+      <div id="analysis-overlay" class="analysis" hidden></div>
+      <div id="loading" class="loading">loading run…</div>
+    </div>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

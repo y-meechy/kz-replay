@@ -1,0 +1,29 @@
+{
+  "updatedAt": "2026-07-26T22:27:13.444Z",
+  "maps": {
+    "kz_grotto": {
+      "checksum": "e0d2402a85e215f2ed2713a3ad655690",
+      "megabytes": 2.58,
+      "convertedAt": null,
+      "adopted": true,
+      "attempts": 0,
+      "error": null
+    },
+    "kz_moss": {
+      "checksum": "c5f872972f6754f18cdeba50713e9183",
+      "megabytes": 0.42,
+      "convertedAt": null,
+      "adopted": true,
+      "attempts": 0,
+      "error": null
+    },
+    "kz_victoria": {
+      "checksum": "f6e0923c7e2aed949750173b08eb4ae0",
+      "megabytes": 0.84,
+      "convertedAt": null,
+      "adopted": true,
+      "attempts": 0,
+      "error": null
+    }
+  }
+}
