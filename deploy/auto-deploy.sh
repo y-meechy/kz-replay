@@ -19,6 +19,9 @@ HEALTH_URL=${KZ_HEALTH_URL:-http://127.0.0.1:8081/healthz}
 # Touch this file to stop deployments without disabling the timer: a map
 # reconversion runs for hours and replacing the container would kill it.
 HOLD_FILE=${KZ_HOLD_FILE:-/var/lib/kz-replay/.deploy-hold}
+# The commit that last failed to build or come up. Without remembering it, a broken
+# push would be retried every two minutes, and each retry is a full image build.
+FAILED_FILE=${KZ_FAILED_FILE:-/var/lib/kz-replay/.deploy-failed-sha}
 HEALTH_TIMEOUT_SECONDS=90
 
 log() { echo "[$(date --iso-8601=seconds)] $*"; }
@@ -46,15 +49,24 @@ main() {
     return 0
   fi
 
+  if [ "$target" = "$(cat "$FAILED_FILE" 2>/dev/null || true)" ]; then
+    # Already tried this one and it did not work. Waiting for a new commit rather
+    # than rebuilding it every two minutes until someone notices.
+    return 0
+  fi
+
   log "main moved ${current:0:8} -> ${target:0:8}, deploying"
 
   # The image that is serving right now, so there is something to go back to.
-  docker image tag kz-replay:latest kz-replay:rollback
+  # Missing on a first ever deploy, which is not a reason to stop.
+  docker image tag kz-replay:latest kz-replay:rollback 2>/dev/null ||
+    log "no current image to keep as rollback"
 
   git reset --quiet --hard origin/main
   log "building"
   if ! docker compose -f "$COMPOSE_FILE" build --pull; then
     log "BUILD FAILED, still serving ${current:0:8}"
+    echo "$target" > "$FAILED_FILE"
     git reset --quiet --hard "$current"
     return 1
   fi
@@ -66,6 +78,7 @@ main() {
   while [ "$waited" -lt "$HEALTH_TIMEOUT_SECONDS" ]; do
     if curl --silent --fail --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then
       log "deployed ${target:0:8}, healthy after ${waited}s"
+      rm -f "$FAILED_FILE"
       return 0
     fi
     sleep 5
@@ -73,6 +86,7 @@ main() {
   done
 
   log "UNHEALTHY after ${HEALTH_TIMEOUT_SECONDS}s, rolling back to ${current:0:8}"
+  echo "$target" > "$FAILED_FILE"
   docker image tag kz-replay:rollback kz-replay:latest
   git reset --quiet --hard "$current"
   docker compose -f "$COMPOSE_FILE" up -d --no-deps --scale kz-replay=1
