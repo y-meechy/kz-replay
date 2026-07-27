@@ -58,6 +58,14 @@
           <span>Map geometry</span>
           <span class="toggle__status" id="map-status">—</span>
         </label>
+
+        <!-- The same switch as the MHUD button in the controls row, for the narrow
+             layout where that row has no space left to give it. Only one of the
+             two is ever on screen. -->
+        <label class="toggle toggle--narrow-only">
+          <input type="checkbox" id="mhud-check" checked />
+          <span>Movement HUD</span>
+        </label>
         <button
           id="map-convert"
           class="button button--small"
@@ -170,14 +178,90 @@
           <button type="button" data-camera="follow">Follow</button>
           <button type="button" data-camera="first-person">Eyes</button>
         </div>
+        <button
+          id="mhud-toggle"
+          class="button button--toggle"
+          type="button"
+          aria-pressed="true"
+          aria-controls="mhud"
+          title="Speed, keys and jump stats over the run"
+        >
+          MHUD
+        </button>
         <span class="controls__hint"
-          >space play · ← → step · C camera</span
+          >space play · ← → step · C camera · M hud</span
         >
       </footer>
+
+      <!-- The movement HUD, in the KZ tradition: bottom centre, over the run, and
+           small enough to read past. Never interactive, so a drag to orbit the
+           camera passes straight through it. -->
+      <div class="mhud" id="mhud">
+        <div class="mhud__live">
+          <!-- The KZTimer arrangement: crouch and jump flanking W on the top row,
+               A S D underneath. A key that is not held shows as a bar, so the
+               block keeps its shape and only the pressed keys read as letters. -->
+          <div class="mhud__keys">
+            <span class="mhud__key" data-key="duck">C</span>
+            <span class="mhud__key" data-key="w">W</span>
+            <span class="mhud__key" data-key="jump">J</span>
+            <span class="mhud__key" data-key="a">A</span>
+            <span class="mhud__key" data-key="s">S</span>
+            <span class="mhud__key" data-key="d">D</span>
+          </div>
+          <div class="mhud__speed">
+            <span class="mhud__speed-value" data-mhud="speed">0</span>
+            <span class="mhud__speed-unit">u/s</span>
+          </div>
+        </div>
+      </div>
 
       <div id="analysis-overlay" class="analysis" hidden></div>
       <div id="loading" class="loading">loading run…</div>
     </div>
+
+    <!-- /docs. Written for whoever is adding links to this viewer from another
+         site, so it is a URL reference and nothing else. -->
+    <main class="docs" id="docs" hidden>
+      <h1>Linking to a replay</h1>
+
+      <pre class="docs__code">
+/watch?ids=&lt;record id&gt;
+/watch?ids=&lt;first&gt;,&lt;second&gt;</pre>
+      <p>
+        The first id is the run you watch. The second is the one it gets
+        measured against. Swap them to watch the other side.
+      </p>
+      <p>
+        Two is the limit. Extra ids get dropped and the viewer says so on
+        screen.
+      </p>
+      <p>
+        Both runs have to be the same map, the same course and the same mode. If
+        they are not, the viewer loads the first one on its own and tells you
+        why.
+      </p>
+
+      <h2>Camera</h2>
+      <pre class="docs__code">/watch?ids=&lt;record id&gt;&amp;view=pov</pre>
+      <table class="docs__table">
+        <tbody>
+          <tr>
+            <th><code>pov</code></th>
+            <td>Through the runner's eyes. This is the default.</td>
+          </tr>
+          <tr>
+            <th><code>follow</code></th>
+            <td>Behind the runner.</td>
+          </tr>
+          <tr>
+            <th><code>orbit</code></th>
+            <td>Whole course from outside. Drag to move.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>Leave <code>view</code> off and you get <code>pov</code>.</p>
+    </main>
 
     <script type="module" src="./main.js"></script>
   </body>

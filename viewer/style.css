@@ -597,6 +597,12 @@ body {
   color: var(--muted);
 }
 
+/* Belongs to the phone layout only; the wide layout has the same switch in the
+   controls row. */
+.toggle--narrow-only {
+  display: none;
+}
+
 .toggle__status {
   margin-left: auto;
   color: var(--muted);
@@ -732,6 +738,95 @@ body {
   font: inherit;
   font-size: 12px;
   text-overflow: ellipsis;
+}
+
+/* --- the movement hud ------------------------------------------------------ */
+
+/* Sits above the controls rather than at a fixed offset, because the controls bar
+   is one row on a desktop and two on a phone. The room it takes is measured and
+   written to --controls-space by main.js, so this never has to guess. */
+.mhud {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--controls-space, 78px) + 12px);
+  z-index: 3;
+  transform: translateX(-50%);
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  /* The run is the point. The HUD is never a click target, so dragging to orbit
+     the camera works straight through it. */
+  pointer-events: none;
+  user-select: none;
+  text-shadow: 0 1px 3px rgba(3, 5, 10, 0.9);
+}
+
+.mhud[hidden] {
+  display: none;
+}
+
+.mhud__live {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.mhud__keys {
+  display: grid;
+  grid-template-columns: repeat(3, 15px);
+  gap: 3px;
+}
+
+.mhud__key {
+  display: grid;
+  place-items: center;
+  height: 13px;
+  color: rgba(148, 163, 184, 0.45);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+.mhud__key.is-held {
+  color: var(--accent);
+}
+
+/* Unheld keys collapse to a bar rather than disappearing, so the block holds its
+   shape and the eye only has to pick out the letters that lit up. */
+.mhud__key:not(.is-held) {
+  font-size: 0;
+}
+
+.mhud__key:not(.is-held)::after {
+  content: "";
+  width: 9px;
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
+}
+
+.mhud__speed {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.mhud__speed-value {
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  /* Four digits of speed must not shift the keys next to it every tick. */
+  min-width: 4ch;
+  text-align: right;
+}
+
+.mhud__speed-unit {
+  font-size: 10px;
+  color: var(--muted);
 }
 
 /* --- controls ------------------------------------------------------------- */
@@ -1169,7 +1264,116 @@ body {
     justify-self: end;
   }
 
+  /* A third row of controls would cost more of the run than the HUD is worth, so
+     here the switch lives in the stats panel instead. */
+  .controls > #mhud-toggle {
+    display: none;
+  }
+
+  /* Every pixel the HUD gives back is a pixel of the run, and a phone held
+     sideways has very few of them to spare. */
+  .mhud__live {
+    gap: 9px;
+  }
+
+  .mhud__keys {
+    grid-template-columns: repeat(3, 13px);
+    gap: 2px;
+  }
+
+  .mhud__key {
+    height: 11px;
+    font-size: 10px;
+  }
+
+  .mhud__speed-value {
+    font-size: 22px;
+  }
+
+  .toggle--narrow-only {
+    display: flex;
+  }
+
   .controls__hint {
     display: none;
   }
+}
+
+/* --- /docs ----------------------------------------------------------------
+   A reference page for whoever is linking to the viewer from somewhere else, so
+   it is a column of text with the URLs made obvious. Narrow on purpose: this is
+   read, not scanned. */
+
+.docs {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 40px 22px 80px;
+}
+
+.docs h1 {
+  margin: 0 0 10px;
+  font-size: 26px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.docs h2 {
+  margin: 34px 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.docs p {
+  margin: 0 0 10px;
+  color: var(--text);
+  max-width: 62ch;
+}
+
+/* The whole point of the page, so it gets to be the loudest thing on it. */
+.docs__code {
+  margin: 0 0 12px;
+  padding: 11px 13px;
+  border: 1px solid var(--edge);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--accent);
+  font:
+    400 13px/1.5 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  /* A record id does not wrap, and a long line must not push the page sideways. */
+  overflow-x: auto;
+}
+
+.docs code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--accent);
+  font:
+    400 12px/1.4 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+
+.docs__table {
+  width: 100%;
+  margin: 0 0 12px;
+  border-collapse: collapse;
+}
+
+.docs__table th,
+.docs__table td {
+  padding: 7px 10px 7px 0;
+  text-align: left;
+  font-weight: 400;
+  vertical-align: top;
+  border-bottom: 1px solid var(--edge);
+}
+
+.docs__table th {
+  width: 5.5rem;
 }

@@ -471,9 +471,9 @@ export const createBrowse = ({ root, onWatch }) => {
   return {
     async load() {
       const [catalog, boards, manifest] = await Promise.all([
-        fetchJson("./data/maps.json", null),
-        fetchJson("./data/leaderboards.json", { entries: {} }),
-        fetchJson("./data/geometry.json", { maps: {} }),
+        fetchJson("/data/maps.json", null),
+        fetchJson("/data/leaderboards.json", { entries: {} }),
+        fetchJson("/data/geometry.json", { maps: {} }),
       ]);
       entries = boards.entries ?? {};
       dom.replayButton.disabled = false;

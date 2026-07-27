@@ -40,6 +40,37 @@ const BLOCK = 32;
 
 export const CAMERA_MODES = ["orbit", "follow", "first-person"];
 
+// A daylight sky, kept dim on purpose. The run is drawn in bright speed colours
+// and the panels over it are dark, so a real midday blue would blow past both.
+// These read as sky without becoming the brightest thing on screen.
+const SKY_ZENITH = "#1d3a5f";
+const SKY_HORIZON = "#5d7898";
+
+/**
+ * A vertical gradient, used as the scene background.
+ *
+ * Four pixels wide because a one pixel texture picks up filtering artefacts at the
+ * seam; nothing varies along that axis. Tall enough that the gradient does not
+ * band. Mapped equirectangularly, so canvas top becomes the zenith.
+ */
+const skyTexture = () => {
+  const canvas = document.createElement("canvas");
+  canvas.width = 4;
+  canvas.height = 256;
+  const context = canvas.getContext("2d");
+  const gradient = context.createLinearGradient(0, 0, 0, canvas.height);
+  gradient.addColorStop(0, SKY_ZENITH);
+  gradient.addColorStop(0.62, "#3c5a80");
+  gradient.addColorStop(1, SKY_HORIZON);
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.mapping = THREE.EquirectangularReflectionMapping;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+};
+
 // Slow to fast. Deliberately not a rainbow: cool for walk speed, hot for a run
 // that is genuinely moving, so a glance at the line reads as a speed chart.
 const SPEED_STOPS = [
@@ -125,21 +156,77 @@ export const createTeleportMarkers = (track) => {
 };
 
 /**
+ * Shortest way round from one angle to another, in degrees.
+ *
+ * Yaw is recorded in -180..180 and wraps, so a naive lerp from 179 to -179 sweeps
+ * 358 degrees the long way — a full spin in one frame, at exactly the moment a
+ * runner is turning hardest. Pitch never wraps in practice, but the same function
+ * is correct for it, so both use this.
+ */
+const lerpDegrees = (from, to, t) => {
+  const delta = ((((to - from) % 360) + 540) % 360) - 180;
+  return from + delta * t;
+};
+
+/**
+ * What is actually drawing, as the driver reports it.
+ *
+ * Worth having because "the replay is choppy" has one cause nothing in this file can
+ * fix: a browser with hardware acceleration switched off draws WebGL on the CPU,
+ * through SwiftShader, and any scene becomes a slideshow. It shows up in this string
+ * and nowhere else — the frame rate alone cannot tell you why it is low.
+ */
+const gpuName = (renderer) => {
+  const gl = renderer.getContext();
+  const info = gl.getExtension("WEBGL_debug_renderer_info");
+  return info
+    ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL)
+    : gl.getParameter(gl.RENDERER);
+};
+
+const isSoftwareRenderer = (name) =>
+  /swiftshader|software|llvmpipe|basic render/i.test(name ?? "");
+
+/**
  * @param canvas    the canvas to render into
  * @param track     decoded .kztrack (see src/track.js)
  * @param onFrame   called every rendered frame with live readouts for the HUD
  */
 export const createPlayer = ({ canvas, track, onFrame }) => {
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  const renderer = new THREE.WebGLRenderer({
+    canvas,
+    antialias: true,
+    // A laptop with two graphics chips gives a page the integrated one by default,
+    // and that is where most reports of a choppy replay come from. This asks for the
+    // real card. It is a hint, not a promise: a browser with hardware acceleration
+    // switched off entirely still falls back to software, which gpuName() reports.
+    powerPreference: "high-performance",
+    // Nothing is ever shown behind the canvas, so an opaque drawing buffer saves a
+    // blend when the browser composites the page. Neither is the stencil buffer used.
+    alpha: false,
+    stencil: false,
+  });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   // Without tone mapping, several lights add up past 1.0 and every surface clips
   // to flat white, which looks like a paper cut-out instead of a room.
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 0.85;
 
+  const gpu = gpuName(renderer);
+  if (isSoftwareRenderer(gpu)) {
+    console.warn(
+      `Hardware acceleration is off in this browser — WebGL is running on the CPU (${gpu}). ` +
+        `Playback will be choppy no matter what. In Chrome or Edge: Settings, System, ` +
+        `"Use graphics acceleration when available", then restart the browser.`,
+    );
+  }
+
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color("#07090f");
-  scene.fog = new THREE.Fog("#07090f", 2500, 9000);
+  scene.background = skyTexture();
+  // The fog has to be the sky's own horizon colour. Anything else and distant
+  // geometry fades towards a colour that is not behind it, which reads as a grey
+  // veil hanging in front of the sky rather than as distance.
+  scene.fog = new THREE.Fog(SKY_HORIZON, 2500, 9000);
 
   // Render-space position of one recorded tick.
   const worldPointAt = (index) =>
@@ -336,6 +423,30 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
     side: THREE.FrontSide,
   });
 
+  // Every imported material is put on the same footing as the plain one above:
+  // flat shaded so the geometry reads without normals, front faces only so the
+  // camera can see into the level, and fully rough so nothing turns into a mirror.
+  // Only the colour is the map's own.
+  const adoptedMaterials = new Map();
+  const adoptMapMaterial = (material) => {
+    let adopted = adoptedMaterials.get(material.uuid);
+    if (!adopted) {
+      adopted = material;
+      adopted.flatShading = true;
+      adopted.side = THREE.FrontSide;
+      adopted.roughness = 1;
+      adopted.metalness = 0;
+      // A map can finish loading long after the camera settled on the orbit view,
+      // which is where ghosting is on, so match whatever is already in force.
+      adopted.transparent = ghosted === true;
+      adopted.opacity = ghosted === true ? 0.35 : 1;
+      adopted.depthWrite = ghosted !== true;
+      adopted.needsUpdate = true;
+      adoptedMaterials.set(material.uuid, adopted);
+    }
+    return adopted;
+  };
+
   const loadMap = (url) =>
     new Promise((resolve, reject) => {
       const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
@@ -354,7 +465,12 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
               return;
             }
             if (!object.isMesh) return;
-            object.material = mapMaterial;
+            // A coloured map arrives with a flat colour per surface, worked out from
+            // the material the mapper used. Keep those and only match them to the
+            // scene's lighting; a map with none still gets the plain concrete.
+            object.material = object.material?.isMeshStandardMaterial
+              ? adoptMapMaterial(object.material)
+              : mapMaterial;
             object.frustumCulled = true;
             const index = object.geometry.getIndex();
             triangles +=
@@ -369,7 +485,7 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
           mapGroup.visible = true;
           grid.visible = false;
           // With walls to hide behind, near geometry should not fade out.
-          scene.fog = new THREE.Fog("#07090f", span * 2, span * 8);
+          scene.fog = new THREE.Fog(SKY_HORIZON, span * 2, span * 8);
           resolve({ triangles: Math.round(triangles) });
         },
         undefined,
@@ -402,6 +518,7 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
 
   const followOffset = new THREE.Vector3();
   const scratch = new THREE.Vector3();
+  const rivalScratch = new THREE.Vector3();
   const lookTarget = new THREE.Vector3();
 
   // --- playback state ------------------------------------------------------
@@ -427,17 +544,51 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
     return target.set(...toWorld(between(0), between(1), between(2)));
   };
 
+  /**
+   * Where the runner is looking, between ticks as well as on them.
+   *
+   * Interpolated, and that is the single thing that makes playback look smooth. A
+   * replay is recorded at 64 ticks a second and drawn at 60 to 144 frames a second,
+   * so taking the nearest tick's angle means the view holds still for a frame or two
+   * and then jerks — measured on kz_grotto, 47% of frames did not turn at all and
+   * the rest turned a median of 6 degrees in one go. At quarter speed it was 86% of
+   * frames, about sixteen distinct aims a second, which is what a slowed replay
+   * looking like a slideshow actually was. Position was already interpolated, so the
+   * world slid while the view snapped, which is the worst of both.
+   */
   const viewDirection = (index, target, sourceTrack = track) => {
-    const i = Math.round(
-      THREE.MathUtils.clamp(index, 0, sourceTrack.count - 1),
+    const clamped = THREE.MathUtils.clamp(index, 0, sourceTrack.count - 1);
+    const low = Math.floor(clamped);
+    const high = Math.min(low + 1, sourceTrack.count - 1);
+    const t = clamped - low;
+    const yaw = THREE.MathUtils.degToRad(
+      lerpDegrees(sourceTrack.yaw[low], sourceTrack.yaw[high], t),
     );
-    const yaw = THREE.MathUtils.degToRad(sourceTrack.yaw[i]);
-    const pitch = THREE.MathUtils.degToRad(sourceTrack.pitch[i]);
+    const pitch = THREE.MathUtils.degToRad(
+      lerpDegrees(sourceTrack.pitch[low], sourceTrack.pitch[high], t),
+    );
     // Source forward, then converted to render space by toWorld.
     const fx = Math.cos(pitch) * Math.cos(yaw);
     const fy = Math.cos(pitch) * Math.sin(yaw);
     const fz = -Math.sin(pitch);
     return target.set(...toWorld(fx, fy, fz));
+  };
+
+  /**
+   * Eye height, with the crouch spread over the tick it happens on.
+   *
+   * Standing and ducked eyes are 18 units apart and a bhop run ducks several times a
+   * second, so switching between them on a tick boundary is a visible jolt each time.
+   */
+  const eyeHeightAt = (index, sourceTrack) => {
+    const clamped = THREE.MathUtils.clamp(index, 0, sourceTrack.count - 1);
+    const low = Math.floor(clamped);
+    const high = Math.min(low + 1, sourceTrack.count - 1);
+    const heightAt = (i) =>
+      (sourceTrack.flags[i] & TRACK_FLAG.DUCKING) !== 0
+        ? DUCKED_EYE_HEIGHT
+        : EYE_HEIGHT;
+    return THREE.MathUtils.lerp(heightAt(low), heightAt(high), clamped - low);
   };
 
   const durationOf = (sourceTrack) =>
@@ -449,10 +600,21 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
 
   let viewWidth = 0;
   let viewHeight = 0;
+  // The canvas is sized by CSS, so the renderer has to be told when that changed.
+  // Reading clientWidth is what tells you — but reading it forces the browser to
+  // recompute layout, and the HUD writes to the document every frame, so asking
+  // inside the render loop meant a full layout recalculation a hundred times a
+  // second for an answer that changes when someone drags the window. The observer
+  // says when to bother instead.
+  let sizeMaybeChanged = true;
+  const sizeObserver = new ResizeObserver(() => {
+    sizeMaybeChanged = true;
+  });
+  sizeObserver.observe(canvas);
 
-  // Called every frame so the canvas can be resized by CSS alone, but the renderer
-  // is only touched when the size actually changed.
   const resize = () => {
+    if (!sizeMaybeChanged) return;
+    sizeMaybeChanged = false;
     const width = canvas.clientWidth || 1;
     const height = canvas.clientHeight || 1;
     if (width === viewWidth && height === viewHeight) return;
@@ -472,10 +634,22 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
   const setGhosted = (next) => {
     if (ghosted === next) return;
     ghosted = next;
-    mapMaterial.transparent = next;
-    mapMaterial.opacity = next ? 0.35 : 1;
-    mapMaterial.depthWrite = !next;
-    mapMaterial.needsUpdate = true;
+    // A coloured map is drawn with its own materials, so ghosting has to reach all
+    // of them, not just the plain one.
+    for (const material of [mapMaterial, ...adoptedMaterials.values()]) {
+      material.transparent = next;
+      material.opacity = next ? 0.35 : 1;
+      material.depthWrite = !next;
+      material.needsUpdate = true;
+    }
+  };
+
+  // Rebuilding the projection matrix is only needed when the field of view actually
+  // changes, which is on a camera switch, not on every one of a hundred frames.
+  const setFov = (value) => {
+    if (camera.fov === value) return;
+    camera.fov = value;
+    camera.updateProjectionMatrix();
   };
 
   const updateCamera = (seconds) => {
@@ -483,10 +657,9 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
     setGhosted(cameraMode === "orbit");
 
     if (cameraMode === "orbit") {
-      camera.fov = 60;
+      setFov(60);
       controls.enabled = true;
       controls.update();
-      camera.updateProjectionMatrix();
       return;
     }
 
@@ -495,15 +668,10 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
     const index = indexAtTime(seconds, cameraTrack);
     positionAt(index, scratch, cameraTrack);
     viewDirection(index, lookTarget, cameraTrack);
-
-    const cameraIndex = Math.round(
-      THREE.MathUtils.clamp(index, 0, cameraTrack.count - 1),
-    );
-    const ducked = (cameraTrack.flags[cameraIndex] & TRACK_FLAG.DUCKING) !== 0;
-    const eye = ducked ? DUCKED_EYE_HEIGHT : EYE_HEIGHT;
+    const eye = eyeHeightAt(index, cameraTrack);
 
     if (cameraMode === "first-person") {
-      camera.fov = 90;
+      setFov(90);
       camera.position.set(scratch.x, scratch.y + eye, scratch.z);
       camera.lookAt(
         scratch.x + lookTarget.x * 100,
@@ -511,7 +679,7 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
         scratch.z + lookTarget.z * 100,
       );
     } else {
-      camera.fov = 70;
+      setFov(70);
       followOffset.copy(lookTarget).multiplyScalar(-150);
       camera.position.set(
         scratch.x + followOffset.x,
@@ -520,7 +688,6 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
       );
       camera.lookAt(scratch.x, scratch.y + eye, scratch.z);
     }
-    camera.updateProjectionMatrix();
   };
 
   const setCameraMode = (mode) => {
@@ -558,12 +725,13 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
 
     let rivalIndex = null;
     if (rival) {
-      rivalIndex = Math.round(indexAtTime(playbackTime, rival.track));
-      rivalMarker.position.set(
-        rival.points[rivalIndex * 3],
-        rival.points[rivalIndex * 3 + 1],
-        rival.points[rivalIndex * 3 + 2],
-      );
+      // Interpolated for the same reason the main marker is: the two are watched
+      // side by side, and one sliding while the other steps is more obvious than
+      // either fault on its own.
+      const rivalPosition = indexAtTime(playbackTime, rival.track);
+      rivalIndex = Math.round(rivalPosition);
+      positionAt(rivalPosition, rivalScratch, rival.track);
+      rivalMarker.position.copy(rivalScratch);
       rival.line.geometry.instanceCount = Math.max(1, rivalIndex);
     }
 
@@ -704,6 +872,9 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
     debug: () => {
       const mapBox = new THREE.Box3().setFromObject(mapGroup);
       return {
+        gpu,
+        softwareRendered: isSoftwareRenderer(gpu),
+        pixelRatio: renderer.getPixelRatio(),
         drawnTriangles: renderer.info.render.triangles,
         drawCalls: renderer.info.render.calls,
         mapVisible: mapGroup.visible,
@@ -758,6 +929,7 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
       ),
     dispose: () => {
       disposed = true;
+      sizeObserver.disconnect();
       controls.dispose();
       renderer.dispose();
       scene.traverse((object) => {
