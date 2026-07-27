@@ -1,9 +1,17 @@
-// Two views, one page: browse the maps, or watch a run.
+// Three pages, one document: browse the maps, watch a run, or read the docs.
 //
-// The url is the whole state. #/ is the map list, #/watch/<id> plays one run, and
-// #/watch/<id>/vs/<other> plays two against each other. That means every run is a
-// link you can send someone, the back button works, and a reload lands where you
-// were, none of which is true if the view lives in a variable.
+// The url is the whole state. That means every run is a link you can send someone,
+// the back button works, and a reload lands where you were, none of which is true
+// if the view lives in a variable.
+//
+//   /                                          the map list
+//   /watch?ids=<id>[,<id>]&view=pov|follow|orbit
+//   /docs                                      how to build those links
+//
+// Query parameters rather than path segments because the links are built by other
+// sites, not just by this one, and `ids=a,b` is something you can put together with
+// string concatenation and no knowledge of our routing. viewer/index.html has the
+// page a linker actually reads.
 
 import { decodeTrack } from "../src/track.js";
 import { timeAtDistance } from "../src/compare.js";
@@ -12,14 +20,109 @@ import { loadRunById, parseRecordIds } from "./src/loadRun.js";
 import { buildInsights } from "./src/insights.js";
 import { createAnalysisPanel } from "./src/analysisPanel.js";
 import { createBrowse } from "./src/browse.js";
+import { createMhud } from "./src/mhud.js";
 import { formatDelta, formatRunTime } from "./src/format.js";
 
 const el = (id) => document.getElementById(id);
+
+// --- urls -------------------------------------------------------------------
+
+/**
+ * `view` in a link, to a camera in the player.
+ *
+ * Three short words rather than the player's own names, because "pov" is what a KZ
+ * player calls the first person camera and the link is written by people, not by us.
+ */
+const VIEWS = {
+  pov: "first-person",
+  follow: "follow",
+  orbit: "orbit",
+};
+const VIEW_NAMES = Object.fromEntries(
+  Object.entries(VIEWS).map(([name, mode]) => [mode, name]),
+);
+const DEFAULT_VIEW = "pov";
+
+/**
+ * How many record ids one link may carry.
+ *
+ * Two, because that is what the player can draw: one run, and one rival to measure
+ * it against. Extra ids are dropped with a notice rather than ignored in silence,
+ * so whoever built the link finds out.
+ */
+const MAX_RUNS = 2;
+
+const watchUrl = (ids, view = DEFAULT_VIEW, notice = null) => {
+  const params = new URLSearchParams({ ids: ids.join(",") });
+  // Left out when it is the default, so the common link stays short.
+  if (view !== DEFAULT_VIEW) params.set("view", view);
+  if (notice) params.set("notice", notice);
+  // URLSearchParams escapes the separator to %2C. A comma is legal unescaped in a
+  // query string, and `ids=a,b` is the shape the docs promise and the shape someone
+  // reads back off their address bar, so put it back.
+  return `/watch?${params.toString().replace(/%2C/g, ",")}`;
+};
+
+/**
+ * The new url for an old link, or null if it is not one.
+ *
+ * Links of the old shape are already out there in Discord messages, so they are
+ * translated instead of dropped:
+ *
+ *   #/watch/<a>                  -> /watch?ids=<a>
+ *   #/watch/<a>/vs/<b>           -> /watch?ids=<b>,<a>   (it opened on b)
+ *   #/watch/<a>/vs/<b>/pov/main  -> /watch?ids=<a>,<b>
+ *   #/watch/<a>/eyes/<notice>    -> /watch?ids=<a>&notice=<notice>
+ */
+const legacyUrl = () => {
+  const hash = window.location.hash.replace(/^#\/?/, "");
+  if (!hash.startsWith("watch")) return null;
+  const [, reference, keyword, other, , which] = hash.split("/");
+  if (!reference) return "/";
+  if (keyword === "vs" && other) {
+    // An old comparison opened on the rival unless the url said otherwise, and the
+    // run being watched is the first id now.
+    return watchUrl(which === "main" ? [reference, other] : [other, reference]);
+  }
+  if (keyword === "eyes") return watchUrl([reference], DEFAULT_VIEW, other);
+  return watchUrl([reference]);
+};
+
+/**
+ * What the current url is asking for.
+ *
+ * @returns { page, ids, dropped, view, notice } — `dropped` is how many ids were
+ *          over the limit, and `ids` is empty when the link named none we could read.
+ */
+const readRoute = () => {
+  const path = window.location.pathname.replace(/\/+$/, "");
+  const params = new URLSearchParams(window.location.search);
+
+  if (path === "/docs") return { page: "docs", ids: [], dropped: 0 };
+  if (path !== "/watch") return { page: "browse", ids: [], dropped: 0 };
+
+  const requested = params.get("view");
+  const ids = parseRecordIds(params.get("ids") ?? "");
+  return {
+    page: "watch",
+    ids: ids.slice(0, MAX_RUNS),
+    dropped: Math.max(0, ids.length - MAX_RUNS),
+    view: requested in VIEWS ? requested : DEFAULT_VIEW,
+    notice: params.get("notice"),
+  };
+};
+
+const navigate = (url, { replace = false } = {}) => {
+  if (replace) history.replaceState(null, "", url);
+  else history.pushState(null, "", url);
+  route();
+};
 
 // Looked up once. updateHud() runs on every rendered frame, so it must not go
 // hunting through the document sixty times a second.
 const browseRoot = el("browse");
 const watchRoot = el("watch");
+const docsRoot = el("docs");
 const stage = el("stage");
 const loading = el("loading");
 const backButton = el("back");
@@ -54,12 +157,18 @@ const watchCompareButton = el("watch-compare-button");
 const watchCompareError = el("watch-compare-error");
 const statsPanel = el("stats");
 const statsToggle = el("stats-toggle");
+const controls = document.querySelector(".controls");
+const mhudToggle = el("mhud-toggle");
+const mhudCheck = el("mhud-check");
 
 let player = null;
 let scrubbing = false;
 let activeId = null;
 let activeRival = null;
 let activeLaunchIntent = null;
+// The camera the url is currently claiming, as a `view` name rather than the
+// player's own. Kept so that changing camera can rewrite the link.
+let activeView = DEFAULT_VIEW;
 let activeRun = null;
 let activeRivalRun = null;
 let activeTrack = null;
@@ -80,6 +189,34 @@ const setStatsOpen = (open) => {
   statsToggle.setAttribute("aria-expanded", String(open));
   statsToggle.setAttribute("aria-label", open ? "Close stats" : "Open stats");
   statsToggle.textContent = open ? "Close stats" : "Stats";
+};
+
+// --- the movement hud --------------------------------------------------------
+
+const mhud = createMhud({ root: el("mhud") });
+
+// The HUD sits above the controls, and the controls are one row on a desktop and
+// two on a phone. What it needs is how much room the bar takes off the bottom of
+// the screen, which is its own offset plus its height, so measuring the gap up to
+// its top edge covers both in one number and needs no per-breakpoint arithmetic.
+// The bar is anchored to the bottom, so this survives a change of window height
+// and only has to be redone when the bar itself resizes.
+new ResizeObserver(() => {
+  const space = window.innerHeight - controls.getBoundingClientRect().top;
+  watchRoot.style.setProperty("--controls-space", `${Math.round(space)}px`);
+}).observe(controls);
+
+const storedMhudPreference = localStorage.getItem("kz.mhud");
+// On by default: it is what a KZ player expects to be looking at. Once someone
+// uses the toggle, keep that choice between runs and visits.
+let mhudOn = storedMhudPreference !== "off";
+
+const setMhud = (on) => {
+  mhudOn = Boolean(on);
+  localStorage.setItem("kz.mhud", mhudOn ? "on" : "off");
+  mhudToggle.setAttribute("aria-pressed", String(mhudOn));
+  mhudCheck.checked = mhudOn;
+  mhud.setVisible(mhudOn);
 };
 
 /** Seek the playback to a moment, and let it run so the moment plays out. */
@@ -142,10 +279,10 @@ const fetchOk = async (url, options) => {
 /** A run prepared earlier by the CLI. No analysis: that needs the replay itself. */
 const loadPreparedTrack = async (recordId) => {
   const [buffer, meta] = await Promise.all([
-    fetchOk(`./tracks/${recordId}.kztrack`).then((response) =>
+    fetchOk(`/tracks/${recordId}.kztrack`).then((response) =>
       response.arrayBuffer(),
     ),
-    fetchOk(`./tracks/${recordId}.json`).then((response) => response.json()),
+    fetchOk(`/tracks/${recordId}.json`).then((response) => response.json()),
   ]);
   return { recordId, track: decodeTrack(buffer), meta, analysis: null };
 };
@@ -210,6 +347,21 @@ const renderScrubMarks = (data, duration) => {
   }
 };
 
+/**
+ * Write a readout only when it says something new.
+ *
+ * updateHud() runs on every rendered frame, up to a hundred and twenty times a
+ * second, and putting the same string back into a text node still makes the browser
+ * redo layout for it. Most of these readouts are two decimal places of a number that
+ * changes far more slowly than that.
+ */
+const shownText = new WeakMap();
+const setText = (node, value) => {
+  if (shownText.get(node) === value) return;
+  shownText.set(node, value);
+  node.textContent = value;
+};
+
 const updateCompareReadout = (frame) => {
   if (!alignment) return;
   const viewingRival = selectedPov === "rival";
@@ -225,26 +377,32 @@ const updateCompareReadout = (frame) => {
   const delta = viewingRival
     ? frame.time - otherTime
     : otherTime - frame.referenceTime;
-  statDelta.textContent = (
-    viewingRival ? frame.rivalFinished : frame.referenceFinished
-  )
-    ? formatDelta(alignment.finalDelta)
-    : formatDelta(delta);
-  statGap.textContent =
-    frame.gapToRival === null ? "—" : `${frame.gapToRival} u`;
+  setText(
+    statDelta,
+    (viewingRival ? frame.rivalFinished : frame.referenceFinished)
+      ? formatDelta(alignment.finalDelta)
+      : formatDelta(delta),
+  );
+  setText(statGap, frame.gapToRival === null ? "—" : `${frame.gapToRival} u`);
   analysisPanel.setPlayheadDistance(distance);
 };
 
 const updateHud = (frame) => {
-  statTime.textContent = `${frame.time.toFixed(2)}s`;
-  statSpeed.textContent = `${frame.speed} u/s`;
-  statTeleports.textContent = `${frame.teleports} / ${frame.totalTeleports}`;
-
-  elapsed.textContent = frame.time.toFixed(2);
-  if (!scrubbing) {
-    scrub.value = String(Math.round(frame.progress * 1000));
+  // The stats panel is collapsed most of the time. Nothing needs writing into a
+  // panel nobody can see, and the next frame fills it in the moment it opens.
+  if (statsOpen) {
+    setText(statTime, `${frame.time.toFixed(2)}s`);
+    setText(statSpeed, `${frame.speed} u/s`);
+    setText(statTeleports, `${frame.teleports} / ${frame.totalTeleports}`);
   }
 
+  setText(elapsed, frame.time.toFixed(2));
+  const scrubValue = String(Math.round(frame.progress * 1000));
+  if (!scrubbing && scrub.value !== scrubValue) {
+    scrub.value = scrubValue;
+  }
+
+  mhud.update(frame);
   updateCompareReadout(frame);
 };
 
@@ -261,7 +419,7 @@ const loadMapFor = async (meta, token) => {
   }
 
   mapStatus.textContent = "checking…";
-  const url = `./maps/${meta.map}.glb`;
+  const url = `/maps/${meta.map}.glb`;
   const head = await fetch(url, { method: "HEAD" }).catch(() => null);
   if (!head?.ok) {
     mapStatus.textContent = "not converted yet";
@@ -318,11 +476,33 @@ const selectPov = (next, { persist = false } = {}) => {
   renderScrubMarks(insights, selectedRunDuration());
   analysisPanel.refresh();
 
-  if (persist && activeId && activeRival) {
-    const hash = `#/watch/${activeId}/vs/${activeRival}/pov/${selected}`;
-    history.replaceState(null, "", hash);
-  }
+  if (persist) rewriteUrl();
   return selected;
+};
+
+/**
+ * Put the current view back into the address bar, without adding history.
+ *
+ * The run being watched is the first id, so switching POV swaps the pair over
+ * rather than needing a parameter of its own. Replace, not push: flicking between
+ * cameras should not fill the back button with steps.
+ */
+const rewriteUrl = () => {
+  if (!activeId) return;
+  const ids =
+    selectedPov === "rival" && activeRival
+      ? [activeRival, activeId]
+      : [activeId, activeRival].filter(Boolean);
+  history.replaceState(null, "", watchUrl(ids, activeView));
+};
+
+/** Point both the player and the url at a camera. */
+const applyView = (name, { persist = true } = {}) => {
+  const view = name in VIEWS ? name : DEFAULT_VIEW;
+  activeView = view;
+  const mode = player?.setCameraMode(VIEWS[view]) ?? VIEWS[view];
+  setActiveButton(cameras, "camera", mode);
+  if (persist) rewriteUrl();
 };
 
 const clearRival = () => {
@@ -380,17 +560,25 @@ const loadRival = async (recordId, token, initialPov = "rival") => {
   selectPov(initialPov);
 };
 
+/**
+ * Show the runs a link asked for.
+ *
+ * The first id is the run being watched; a second is the one it is measured
+ * against. Nothing else is positional, so a link is easy to write by hand.
+ */
 const openRun = async (
-  recordId,
-  rivalId,
-  { startEyes = false, notice = null, initialPov = "rival" } = {},
+  ids,
+  { view = DEFAULT_VIEW, notice = null, dropped = 0 } = {},
 ) => {
-  const launchIntent = `${startEyes}:${notice ?? ""}:${initialPov}`;
+  const [recordId, rivalId = null] = ids;
+  const launchIntent = `${notice ?? ""}:${dropped}`;
   if (
     recordId === activeId &&
     rivalId === activeRival &&
     launchIntent === activeLaunchIntent
   ) {
+    // Same runs, so only the camera can have changed.
+    if (view !== activeView) applyView(view, { persist: false });
     return;
   }
   setStatsOpen(false);
@@ -401,8 +589,9 @@ const openRun = async (
   compareError.textContent = "";
   watchCompareError.textContent = "";
   watchCompareInput.value = "";
-  const noticeText =
-    notice === "current-wr"
+  const noticeText = dropped
+    ? `This link named ${dropped + MAX_RUNS} runs. Only ${MAX_RUNS} can be shown at once, so the rest were left out.`
+    : notice === "current-wr"
       ? "This replay is the current WR, so it is shown on its own."
       : notice === "wr-unavailable"
         ? "The exact current WR replay is unavailable, so this replay is shown on its own."
@@ -437,12 +626,10 @@ const openRun = async (
 
     showPlaying(true);
     setActiveButton(rates, "rate", "1");
-    // Replays are meant to be watched through the runner's eyes. Orbit and Follow
-    // remain available, but every entry path — including a WR opened from a map
-    // card — starts in first person.
-    const initialCamera = "first-person";
-    player.setCameraMode(initialCamera);
-    setActiveButton(cameras, "camera", initialCamera);
+    // Replays are meant to be watched through the runner's eyes, so a link that says
+    // nothing about the camera gets first person. Orbit and Follow stay available
+    // from the controls and from ?view=.
+    applyView(view, { persist: false });
     loadMapFor(run.meta, token);
     loading.classList.add("is-hidden");
 
@@ -450,7 +637,8 @@ const openRun = async (
       loading.classList.remove("is-hidden");
       loading.textContent = "loading the run to compare against…";
       try {
-        await loadRival(rivalId, token, initialPov);
+        // The first id is the run being watched, which is this one, not the rival.
+        await loadRival(rivalId, token, "main");
       } catch (error) {
         if (token !== loadToken) return;
         clearRival();
@@ -483,7 +671,7 @@ const leaveWatch = () => {
 // --- controls ---------------------------------------------------------------
 
 backButton.addEventListener("click", () => {
-  window.location.hash = "#/";
+  navigate("/");
 });
 
 statsToggle.addEventListener("click", () => {
@@ -514,9 +702,11 @@ rates.addEventListener("click", (event) => {
 cameras.addEventListener("click", (event) => {
   const camera = event.target.dataset.camera;
   if (!camera) return;
-  player?.setCameraMode(camera);
-  setActiveButton(cameras, "camera", camera);
+  applyView(VIEW_NAMES[camera] ?? DEFAULT_VIEW);
 });
+
+mhudToggle.addEventListener("click", () => setMhud(!mhudOn));
+mhudCheck.addEventListener("change", () => setMhud(mhudCheck.checked));
 
 povs.addEventListener("click", (event) => {
   const pov = event.target.dataset.pov;
@@ -537,7 +727,7 @@ const compareFromWatch = () => {
   }
 
   watchCompareError.textContent = "";
-  window.location.hash = `#/watch/${activeId}/vs/${ids[0]}/pov/main`;
+  navigate(watchUrl([activeId, ids[0]], activeView));
 };
 
 watchCompareButton.addEventListener("click", () => compareFromWatch());
@@ -593,7 +783,10 @@ window.addEventListener("keydown", (event) => {
   } else if (event.code === "ArrowLeft") {
     player.nudge(event.shiftKey ? -64 : -8);
   } else if (event.key.toLowerCase() === "c") {
-    setActiveButton(cameras, "camera", player.cycleCamera());
+    const order = Object.keys(VIEWS);
+    applyView(order[(order.indexOf(activeView) + 1) % order.length]);
+  } else if (event.key.toLowerCase() === "m") {
+    setMhud(!mhudOn);
   }
 });
 
@@ -601,43 +794,60 @@ window.addEventListener("keydown", (event) => {
 
 const browse = createBrowse({
   root: browseRoot,
-  onWatch: ({ recordId, rivalId, startEyes = false, notice = null }) => {
-    if (rivalId) {
-      window.location.hash = `#/watch/${recordId}/vs/${rivalId}`;
-      return;
-    }
-    window.location.hash = startEyes
-      ? `#/watch/${recordId}/eyes/${notice ?? "pasted"}`
-      : `#/watch/${recordId}`;
-  },
+  onWatch: ({ recordId, rivalId, notice = null }) =>
+    navigate(
+      watchUrl(
+        // The run you clicked is the one you watch, so it goes first.
+        [recordId, rivalId].filter(Boolean),
+        DEFAULT_VIEW,
+        rivalId ? null : notice,
+      ),
+    ),
 });
 
 const route = () => {
-  const parts = window.location.hash.replace(/^#\/?/, "").split("/");
+  // An old hash link is turned into the current shape and re-routed, so nothing
+  // below has to know the old format existed.
+  const legacy = legacyUrl();
+  if (legacy) {
+    navigate(legacy, { replace: true });
+    return;
+  }
 
-  if (parts[0] === "watch" && parts[1]) {
+  const { page, ids, view, notice, dropped } = readRoute();
+
+  if (page === "watch") {
+    docsRoot.hidden = true;
     browse.hide();
     watchRoot.hidden = false;
-    const isComparison = parts[2] === "vs";
-    const startEyes = parts[2] === "eyes";
-    const requestedPov =
-      parts[4] === "pov" && ["main", "rival"].includes(parts[5])
-        ? parts[5]
-        : "rival";
-    openRun(parts[1], isComparison ? (parts[3] ?? null) : null, {
-      startEyes,
-      notice: startEyes ? (parts[3] ?? null) : null,
-      initialPov: requestedPov,
-    });
+    if (ids.length) {
+      openRun(ids, { view, notice, dropped });
+      return;
+    }
+    // A /watch link naming nothing we could read. Whoever built it needs to hear
+    // that, not be dropped on the map list as if they had asked for nothing.
+    leaveWatch();
+    loading.classList.remove("is-hidden");
+    loading.textContent =
+      "This link has no readable replay id. It should look like /watch?ids=<record id> — see /docs.";
     return;
   }
 
   watchRoot.hidden = true;
   leaveWatch();
+  docsRoot.hidden = page !== "docs";
+  if (page === "docs") {
+    browse.hide();
+    return;
+  }
   browse.show();
 };
 
+// pushState does not fire an event, so navigate() calls route() itself. These two
+// cover the back button and any old link that still arrives as a hash.
+window.addEventListener("popstate", route);
 window.addEventListener("hashchange", route);
 
+setMhud(mhudOn);
 await browse.load();
 route();
