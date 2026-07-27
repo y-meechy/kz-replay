@@ -1,0 +1,42 @@
+{
+  "name": "kz-replay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Read CS2KZ .replay files and play the runs back in the browser. No game, no video rendering.",
+  "bin": {
+    "kzreplay": "./bin/kzreplay.js"
+  },
+  "scripts": {
+    "fetch": "node bin/kzreplay.js fetch",
+    "wrs": "node bin/kzreplay.js wrs",
+    "inspect": "node bin/kzreplay.js inspect",
+    "dev": "vite viewer",
+    "build": "vite build viewer",
+    "start": "node server/index.js",
+    "serve": "node server/index.js",
+    "refresh": "node bin/kzreplay.js refresh",
+    "check": "node scripts/check-alignment.js",
+    "format": "prettier --write \"{src,bin,viewer,scripts}/**/*.{js,html,css}\""
+  },
+  "dependencies": {
+    "@gltf-transform/cli": "^4.4.2",
+    "@gltf-transform/core": "^4.4.2",
+    "@gltf-transform/functions": "^4.4.2",
+    "fzstd": "^0.1.1",
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "prettier": "^3.3.3",
+    "vite": "^5.4.10"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "overrides": {
+    "brace-expansion": "^5.0.8",
+    "glob": "^13.0.6",
+    "minimatch": "^10.2.5",
+    "sharp": "^0.35.3"
+  }
+}

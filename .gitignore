@@ -1,0 +1,13 @@
+node_modules/
+viewer/dist/
+
+# Cached downloads and generated output. Both are reproducible from the CLI.
+samples/*.replay
+viewer/public/tracks/*.kztrack
+viewer/public/tracks/*.json
+
+.playwright-mcp/
+.DS_Store
+viewer/public/maps/*.glb
+tools/
+viewer/dist/

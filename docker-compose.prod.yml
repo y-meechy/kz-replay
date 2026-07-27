@@ -1,0 +1,29 @@
+services:
+  kz-replay:
+    image: kz-replay:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    platform: linux/amd64
+    ports:
+      - "127.0.0.1:8081:8080"
+    environment:
+      TZ: Europe/Berlin
+      KZ_DATA_DIR: /data/catalog
+      KZ_MAPS_DIR: /data/maps
+      KZ_TOOLS_DIR: /opt/kz-tools
+    volumes:
+      - /var/lib/kz-replay:/data
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - --fail
+        - --silent
+        - --show-error
+        - http://127.0.0.1:8080/healthz
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
