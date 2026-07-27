@@ -1,0 +1,10 @@
+[Unit]
+Description=Deploy kz-replay if origin/main has moved
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/kz-replay/deploy/auto-deploy.sh
+# A build takes a few minutes; anything past this is stuck, not slow.
+TimeoutStartSec=1800
