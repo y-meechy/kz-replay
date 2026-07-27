@@ -1436,6 +1436,11 @@ body {
     display: flex;
   }
 
+  .controls > #knife-toggle {
+    grid-column: 1;
+    justify-self: start;
+  }
+
   .controls__hint {
     display: none;
   }

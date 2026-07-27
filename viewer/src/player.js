@@ -28,6 +28,7 @@ import {
   VRF_UNITS_PER_EXPORTED_METRE,
   VRF_YAW_CORRECTION,
 } from "./vrfExport.js";
+import { createViewmodel } from "./viewmodel.js";
 
 // Source is Z-up and we render Y-up.
 const toWorld = (x, y, z) => [x, z, -y];
@@ -296,6 +297,9 @@ export const createPlayer = ({
         `"Use graphics acceleration when available", then restart the browser.`,
     );
   }
+  // The viewmodel is a second pass over the same frame, so clearing is manual:
+  // the world clears colour and depth, the hands clear depth only.
+  renderer.autoClear = false;
 
   const scene = new THREE.Scene();
   scene.background = skyTexture();
@@ -1167,6 +1171,24 @@ export const createPlayer = ({
     camera.position.add(freecamMove);
   };
 
+  // --- viewmodel ------------------------------------------------------------
+  // Hands and a butterfly knife, drawn over the run in first person. Built on
+  // first use: it is a few hundred triangles and a prebaked reflection probe, and
+  // most people never turn it on.
+  let viewmodel = null;
+  let viewmodelWanted = false;
+  const viewmodelVisible = () =>
+    viewmodelWanted && cameraMode === "first-person";
+
+  const setViewmodel = (enabled) => {
+    viewmodelWanted = Boolean(enabled);
+    if (viewmodelWanted && !viewmodel) {
+      viewmodel = createViewmodel(renderer);
+      viewmodel.resize(viewWidth, viewHeight);
+    }
+    return viewmodelWanted;
+  };
+
   const followOffset = new THREE.Vector3();
   const desiredCameraPos = new THREE.Vector3();
   const desiredLookAt = new THREE.Vector3();
@@ -1372,6 +1394,7 @@ export const createPlayer = ({
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
     resolution.set(width, height);
+    viewmodel?.resize(width, height);
   };
 
   // Rebuilding the projection matrix is only needed when the field of view actually
@@ -1538,6 +1561,7 @@ export const createPlayer = ({
 
     updateCamera(playbackTime, delta);
     resize();
+    renderer.clear();
     renderer.render(scene, camera);
 
     const hudTrack = activeTrack();
@@ -1546,6 +1570,19 @@ export const createPlayer = ({
     // that scrubbing backwards shows the same jump it showed on the way past.
     const hudJump = jumpAtTick(jumpsOf(hudTrack), hudIndex);
 
+    if (viewmodelVisible()) {
+      // Fed the runner's own state, so the hands bob with their stride, drop on a
+      // landing and lag behind a fast turn. The knife's own animation runs on real
+      // time, not replay time: it keeps flipping while the replay is paused.
+      viewmodel.update(delta, {
+        speed: hudTrack.speed[hudIndex],
+        onGround: (hudTrack.flags[hudIndex] & TRACK_FLAG.ONGROUND) !== 0,
+        ducking: (hudTrack.flags[hudIndex] & TRACK_FLAG.DUCKING) !== 0,
+        yaw: hudTrack.yaw[hudIndex],
+        pitch: hudTrack.pitch[hudIndex],
+      });
+      viewmodel.render();
+    }
     onFrame?.({
       index,
       rivalIndex,
@@ -1705,6 +1742,7 @@ export const createPlayer = ({
       // A function rather than the body itself: it does not exist until its .glb has
       // arrived, and a snapshot taken now would be null forever.
       character: () => character,
+      viewmodel: () => viewmodel,
     },
     /** Numbers for checking map alignment without eyeballing a screenshot. */
     debug: () => {
@@ -1778,6 +1816,9 @@ export const createPlayer = ({
       rate = value;
     },
     setCameraMode,
+    /** Show the hands and the knife. Only ever drawn in first person. */
+    setViewmodel,
+    toggleViewmodel: () => setViewmodel(!viewmodelWanted),
     cycleCamera: () =>
       setCameraMode(
         CAMERA_MODES[
@@ -1809,6 +1850,7 @@ export const createPlayer = ({
       disposeMapScene(mapGroup);
       mapGroup.clear();
       mapMaterial.dispose();
+      viewmodel?.dispose();
       renderer.dispose();
       scene.background?.dispose?.();
       scene.traverse((object) => {

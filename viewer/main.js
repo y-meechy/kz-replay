@@ -178,6 +178,7 @@ const watchViews = el("watch-views");
 const controls = document.querySelector(".controls");
 const mhudToggle = el("mhud-toggle");
 const mhudCheck = el("mhud-check");
+const knifeToggle = el("knife-toggle");
 
 let player = null;
 let scrubbing = false;
@@ -198,6 +199,11 @@ let statsOpen = false;
 // Watches the frames of the run being played and counts a view once it has really
 // been watched. One per loaded run.
 let viewTicker = null;
+// New viewers start with the knife visible. Once someone uses the toggle, keep
+// that explicit choice between runs and visits.
+const storedKnifePreference = localStorage.getItem("kz.knife");
+let knifeOn = storedKnifePreference !== "off";
+knifeToggle.setAttribute("aria-pressed", String(knifeOn));
 // Set while a rival is loaded: the shared distance axis both runs are measured on.
 let alignment = null;
 // Clicking through runs faster than they load would otherwise leave two players
@@ -264,6 +270,20 @@ const setMhud = (on) => {
   mhudToggle.setAttribute("aria-pressed", String(mhudOn));
   mhudCheck.checked = mhudOn;
   mhud.setVisible(mhudOn);
+};
+
+/**
+ * Hands and a flipping butterfly knife, in front of the runner's eyes.
+ *
+ * The preference stays enabled between camera changes, but the viewmodel is only
+ * drawn in first person. Turning it on therefore takes the viewer to Eyes.
+ */
+const setKnife = (on) => {
+  knifeOn = Boolean(on);
+  localStorage.setItem("kz.knife", knifeOn ? "on" : "off");
+  knifeToggle.setAttribute("aria-pressed", String(knifeOn));
+  player?.setViewmodel(knifeOn);
+  if (knifeOn && player) applyView(DEFAULT_VIEW);
 };
 
 /**
@@ -845,6 +865,10 @@ const openRun = async (
     // nothing about the camera gets first person. Free and Follow stay available
     // from the controls and from ?view=.
     applyView(view, { persist: false });
+    // A fresh player starts with no viewmodel, so the remembered preference has to
+    // be reapplied. An explicit camera in the URL still wins; the knife waits until
+    // the viewer returns to Eyes rather than overriding the link.
+    player.setViewmodel(knifeOn);
     loadMapFor(run.meta, token, player);
     loading.classList.add("is-hidden");
 
@@ -925,6 +949,7 @@ cameras.addEventListener("click", (event) => {
 
 mhudToggle.addEventListener("click", () => setMhud(!mhudOn));
 mhudCheck.addEventListener("change", () => setMhud(mhudCheck.checked));
+knifeToggle.addEventListener("click", () => setKnife(!knifeOn));
 
 povs.addEventListener("click", (event) => {
   const pov = event.target.dataset.pov;
@@ -1045,6 +1070,8 @@ window.addEventListener("keydown", (event) => {
     applyView(order[(order.indexOf(activeView) + 1) % order.length]);
   } else if (event.key.toLowerCase() === "m") {
     setMhud(!mhudOn);
+  } else if (event.key.toLowerCase() === "k") {
+    setKnife(!knifeOn);
   }
 });
 

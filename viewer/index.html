@@ -182,7 +182,8 @@
           <div class="marks" id="scrub-marks"></div>
         </div>
         <span class="controls__time"
-          ><span id="elapsed">0:00.000</span> / <span id="total">0:00.000</span></span
+          ><span id="elapsed">0:00.000</span> /
+          <span id="total">0:00.000</span></span
         >
         <div class="segmented" id="rates">
           <button type="button" data-rate="0.25">¼×</button>
@@ -207,6 +208,15 @@
         >
           MHUD
         </button>
+        <button
+          id="knife-toggle"
+          class="button button--toggle"
+          type="button"
+          aria-pressed="false"
+          title="Hands and a butterfly knife, in the Eyes view"
+        >
+          Knife
+        </button>
         <!-- The shortcut cheat sheet lives behind an "i" so the control bar
              stays clean; <details> gives the open/close for free. -->
         <details class="controls__hint" id="hint">
@@ -226,6 +236,8 @@
             <dd>camera</dd>
             <dt>M</dt>
             <dd>hud</dd>
+            <dt>K</dt>
+            <dd>knife</dd>
             <dt>drag</dt>
             <dd>look (free cam)</dd>
             <dt>WASD</dt>
