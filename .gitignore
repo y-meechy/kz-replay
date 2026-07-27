@@ -11,3 +11,6 @@ viewer/public/tracks/*.json
 viewer/public/maps/*.glb
 tools/
 viewer/dist/
+
+# Source2Viewer-CLI drops this next to the repo when a material fails to load.
+exceptions.txt

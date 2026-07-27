@@ -125,6 +125,9 @@ export const convertPendingMaps = async ({
   budgetMs = 45 * 60 * 1000,
   force = false,
   only = null,
+  // Colour is the default for anything converted from here on. It costs nothing in
+  // file size and a grey map next to a coloured one just looks broken.
+  withColours = true,
   log = () => {},
 }) => {
   const manifest = await readManifest(manifestPath);
@@ -189,6 +192,7 @@ export const convertPendingMaps = async ({
         workshopId: map.workshopId,
         toolsDir,
         outputDir,
+        withColours,
         log: (message) => log(`  ${map.name}: ${message}`),
       });
       const { size } = await stat(path);
