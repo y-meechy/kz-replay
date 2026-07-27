@@ -1377,3 +1377,23 @@ body {
 .docs__table th {
   width: 5.5rem;
 }
+
+/* Attribution, so it reads as a credit rather than as part of the reference. */
+.docs__credit {
+  margin-top: 30px;
+  padding-top: 14px;
+  border-top: 1px solid var(--edge);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.docs__credit a,
+.browse__foot a {
+  color: var(--muted);
+  text-decoration: underline;
+}
+
+.docs__credit a:hover,
+.browse__foot a:hover {
+  color: var(--accent);
+}

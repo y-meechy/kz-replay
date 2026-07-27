@@ -9,6 +9,12 @@ Stage 3: ghost racing, embedded in the kz-tournament site.
 
 ![the run inside the converted map](docs/map-overview.png)
 
+Map geometry is powered by [Source 2 Viewer](https://s2v.app)
+([ValveResourceFormat](https://github.com/ValveResourceFormat/ValveResourceFormat)).
+Every converted map in this project was exported with it. The Source 2 file formats
+are not documented by Valve — everything here relies on years of reverse
+engineering by that project's contributors, and none of it was worked out here.
+
 ## Try it
 
 ```bash
