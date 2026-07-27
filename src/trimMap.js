@@ -17,9 +17,20 @@
 
 import { NodeIO } from "@gltf-transform/core";
 import { dedup, prune } from "@gltf-transform/functions";
+import { colourFor, isInvisibleMaterial } from "./mapColours.js";
+import { normaliseMeshName } from "./mapMaterialNames.js";
 
-/** The only attribute the viewer's material reads. */
+/** The only attribute the flat-shaded viewer material reads. */
 const KEEP_ATTRIBUTES = new Set(["POSITION"]);
+
+/**
+ * What a textured map needs instead.
+ *
+ * TEXCOORD_0 to look the texture up and NORMAL to light it. TANGENT is left out:
+ * it is only read for normal mapping, and three.js derives one in the shader when
+ * a normal map is present, so carrying a fourth stream per vertex buys nothing.
+ */
+const KEEP_ATTRIBUTES_TEXTURED = new Set(["POSITION", "NORMAL", "TEXCOORD_0"]);
 
 // Plant words as they appear in exported mesh names, which are built from the model
 // and material names the mapper used.
@@ -79,7 +90,22 @@ const countTriangles = (primitive) => {
 /**
  * @returns counts of what was removed, for logging
  */
-export const trimMap = async ({ input, output, dropFoliage = true }) => {
+export const trimMap = async ({
+  input,
+  output,
+  dropFoliage = true,
+  // Keep the map's own materials and the attributes they need. Everything above
+  // about attribute bloat still applies, so the set kept is still the smallest one
+  // that can be drawn — it is just three streams now instead of one.
+  withTextures = false,
+  // Mesh name -> material path, from readMaterialNames(). Given one, every surface
+  // gets a flat colour picked from that name. Costs about thirty material
+  // definitions and not one byte of texture.
+  materialNames = null,
+}) => {
+  const keepAttributes = withTextures
+    ? KEEP_ATTRIBUTES_TEXTURED
+    : KEEP_ATTRIBUTES;
   const io = new NodeIO();
   const document = await io.read(input);
   const root = document.getRoot();
@@ -88,6 +114,42 @@ export const trimMap = async ({ input, output, dropFoliage = true }) => {
   let trianglesRemoved = 0;
   let meshesRemoved = 0;
   const attributesDropped = new Set();
+  // How well the colouring did: how many surfaces the world actually named, and how
+  // many landed on a rule rather than the default grey.
+  let colouredTotal = 0;
+  let colouredNamed = 0;
+  let colouredMatched = 0;
+
+  // Taken before any colour material is made, so the clean-up below throws away
+  // what the exporter brought and never what we just added.
+  const importedMaterials = root.listMaterials();
+  const importedTextures = root.listTextures();
+
+  // One material per colour rather than per mesh, so the compressor can still merge
+  // everything that ends up the same colour into a single draw call.
+  const paletteByHex = new Map();
+  const colourMaterial = ({ hex, linear }) => {
+    let material = paletteByHex.get(hex);
+    if (!material) {
+      material = document
+        .createMaterial(`kz_${hex.slice(1)}`)
+        .setBaseColorFactor([...linear, 1])
+        .setRoughnessFactor(1)
+        .setMetallicFactor(0);
+      paletteByHex.set(hex, material);
+    }
+    return material;
+  };
+
+  const dropMesh = (mesh, meshTriangles) => {
+    // Detach from the scene as well: a node with no mesh is pruned later.
+    for (const parent of mesh.listParents()) {
+      if (parent.propertyType === "Node") parent.setMesh(null);
+    }
+    mesh.dispose();
+    meshesRemoved += 1;
+    trianglesRemoved += meshTriangles;
+  };
 
   for (const mesh of root.listMeshes()) {
     const meshTriangles = mesh
@@ -96,32 +158,47 @@ export const trimMap = async ({ input, output, dropFoliage = true }) => {
     trianglesBefore += meshTriangles;
 
     if (dropFoliage && isFoliage(mesh.getName(), meshTriangles)) {
-      // Detach from the scene as well: a node with no mesh is pruned later.
-      for (const parent of mesh.listParents()) {
-        if (parent.propertyType === "Node") parent.setMesh(null);
-      }
-      mesh.dispose();
-      meshesRemoved += 1;
-      trianglesRemoved += meshTriangles;
+      dropMesh(mesh, meshTriangles);
+      continue;
+    }
+
+    // The material path when the world named one, and the mesh's own name when it
+    // did not. Both are descriptive; only the first is authoritative.
+    const named =
+      materialNames?.get(normaliseMeshName(mesh.getName() ?? "")) ?? null;
+    const describedBy = named ?? mesh.getName() ?? "";
+
+    if (materialNames && isInvisibleMaterial(describedBy)) {
+      // A trigger or clip brush. Solid here, invisible in the game.
+      dropMesh(mesh, meshTriangles);
       continue;
     }
 
     for (const primitive of mesh.listPrimitives()) {
       for (const semantic of primitive.listSemantics()) {
-        if (KEEP_ATTRIBUTES.has(semantic)) continue;
+        if (keepAttributes.has(semantic)) continue;
         attributesDropped.add(semantic);
         primitive.setAttribute(semantic, null);
+      }
+      if (materialNames) {
+        const colour = colourFor(describedBy);
+        primitive.setMaterial(colourMaterial(colour));
+        colouredNamed += named ? 1 : 0;
+        colouredMatched += colour.rule ? 1 : 0;
+        colouredTotal += 1;
       }
     }
   }
 
-  // Materials only referenced textures through the attributes just removed, and
-  // every orphaned accessor and buffer view goes with them.
-  for (const material of root.listMaterials()) {
-    material.dispose();
-  }
-  for (const texture of root.listTextures()) {
-    texture.dispose();
+  // The exporter's own materials only referenced textures through the attributes
+  // just removed, and every orphaned accessor and buffer view goes with them.
+  if (!withTextures) {
+    for (const material of importedMaterials) {
+      material.dispose();
+    }
+    for (const texture of importedTextures) {
+      texture.dispose();
+    }
   }
 
   await document.transform(prune(), dedup());
@@ -132,5 +209,13 @@ export const trimMap = async ({ input, output, dropFoliage = true }) => {
     trianglesRemoved,
     meshesRemoved,
     attributesDropped: [...attributesDropped].sort(),
+    colours: materialNames
+      ? {
+          palette: paletteByHex.size,
+          surfaces: colouredTotal,
+          named: colouredNamed,
+          matched: colouredMatched,
+        }
+      : null,
   };
 };

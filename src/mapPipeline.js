@@ -28,6 +28,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { trimMap } from "./trimMap.js";
+import { readMaterialNames } from "./mapMaterialNames.js";
 
 const run = promisify(execFile);
 
@@ -121,20 +122,39 @@ export const convertMap = async ({
   steamcmd = "steamcmd",
   // Rough ceiling for a file a browser should download. Not a hard limit: a map
   // that cannot get under it is still shipped, with a note.
+  //
+  // Worth knowing when tuning this: keeping the meshes separate for the sake of
+  // culling (see --join below) puts roughly 50% on every map, so a map that used to
+  // land just inside this now needs simplification to get there, and simplification
+  // is the one step that moves vertices.
   budgetBytes = 15_000_000,
   // Leaves and branches are millions of triangles a player runs straight through.
   // Turn this off if a map uses plants as climbable props.
   dropFoliage = true,
+  // Export the map's own materials and textures instead of shapes only. An
+  // experiment: it multiplies both the download and the conversion time, so the
+  // default stays geometry.
+  withTextures = false,
+  // Colour every surface from the material name the world was built with. The
+  // names survive without the game files; the textures do not. See mapColours.js.
+  withColours = false,
+  // Only read when withTextures is on. 1024 is a compromise: a wall fills a lot of
+  // screen on a phone, but the whole point is to keep the file downloadable.
+  textureSize = 1024,
   // Delete the workshop download and the intermediate exports afterwards. One map
   // can be half a gigabyte of vpk plus a 250 MB raw glb, so converting all 85 of
   // them without this needs tens of gigabytes that are never read again.
   cleanup = true,
   log = () => {},
 }) => {
+  // A textured build is written alongside the geometry one rather than over it, so
+  // the two can be compared and the experiment can be thrown away by deleting files.
+  const outputBase = withTextures ? `${mapName}.textured` : mapName;
+
   let temporaryOutput = null;
   try {
     await mkdir(outputDir, { recursive: true });
-    await cleanupTemporaryGlb(outputDir, mapName);
+    await cleanupTemporaryGlb(outputDir, outputBase);
 
     const cli = requireTool(
       join(toolsDir, "Source2Viewer-CLI"),
@@ -201,8 +221,13 @@ export const convertMap = async ({
       );
     }
 
-    // 3b. Export the world. No materials: we want shapes, not textures.
-    log("exporting world geometry to glTF…");
+    // 3b. Export the world. Shapes only unless textures were asked for, because
+    // decoding every material and image is the slowest part of the whole pipeline.
+    log(
+      withTextures
+        ? "exporting world geometry and materials to glTF…"
+        : "exporting world geometry to glTF…",
+    );
     const exportDir = join(workDir, "export", mapName);
     await rm(exportDir, { recursive: true, force: true });
     await run(
@@ -215,6 +240,9 @@ export const convertMap = async ({
         "-d",
         "--gltf_export_format",
         "glb",
+        ...(withTextures
+          ? ["--gltf_export_materials", "--gltf_textures_adapt"]
+          : []),
         "-o",
         exportDir,
       ],
@@ -230,13 +258,40 @@ export const convertMap = async ({
     // foliage. This is where nearly all of the size goes — on kz_moss it is 251 MB
     // down to 3 MB, because 95% of the triangles in that map are leaves — and unlike
     // simplification it does not move a single vertex.
+    let materialNames = null;
+    if (withColours) {
+      log("reading material names from the world nodes…");
+      materialNames = await readMaterialNames({
+        cli,
+        mapVpk: innerVpk,
+        mapName,
+        workDir,
+        log,
+      });
+      log(`the world names a material for ${materialNames.size} meshes`);
+    }
+
     log("trimming attributes and foliage…");
     const trimmed = join(exportDir, "world.trimmed.glb");
-    const trim = await trimMap({ input: raw, output: trimmed, dropFoliage });
+    const trim = await trimMap({
+      input: raw,
+      output: trimmed,
+      dropFoliage,
+      withTextures,
+      materialNames,
+    });
     log(
       `dropped ${trim.meshesRemoved} foliage meshes (${((trim.trianglesRemoved / Math.max(trim.trianglesBefore, 1)) * 100).toFixed(0)}% of triangles) ` +
         `and ${trim.attributesDropped.length} unused attribute streams`,
     );
+    if (trim.colours) {
+      const { palette, surfaces, named, matched } = trim.colours;
+      log(
+        `coloured ${surfaces} surfaces with ${palette} colours: ` +
+          `${named} named by the world, ${matched} matched a rule, ` +
+          `${surfaces - matched} left default grey`,
+      );
+    }
     const packInput = existsSync(trimmed) ? trimmed : raw;
 
     // 5. Shrink, escalating only as far as needed.
@@ -264,7 +319,27 @@ export const convertMap = async ({
           candidate,
           "--compress",
           "meshopt",
-          "--texture-compress",
+          // WebP over KTX2: every browser decodes it natively, where KTX2 needs a
+          // transcoder shipped alongside the viewer. VRAM suffers, download does not.
+          ...(withTextures
+            ? [
+                "--texture-compress",
+                "webp",
+                "--texture-size",
+                String(textureSize),
+              ]
+            : ["--texture-compress", "false"]),
+          // Flat colours are already the cheapest thing a material can be. Baking
+          // them into a palette texture would add an image to a file that has none.
+          ...(withColours ? ["--palette", "false"] : []),
+          // Do not weld the map into one shape. Joining every mesh that shares a
+          // material sounds like a saving and is the opposite: the result is a
+          // handful of shapes that each span the whole map, so nothing is ever off
+          // screen and the whole level is drawn every frame. Keeping the exporter's
+          // split (median mesh spans 0.7% of the map) lets the renderer throw away
+          // what is behind the camera: on kz_victoria, 253k triangles a frame became
+          // 76k, for 13 draw calls becoming 119 and 0.84 MB becoming 1.24 MB.
+          "--join",
           "false",
           "--simplify",
           attempt.simplifyError === null ? "false" : "true",
@@ -292,8 +367,8 @@ export const convertMap = async ({
       );
     }
 
-    const final = join(outputDir, `${mapName}.glb`);
-    temporaryOutput = temporaryGlbPath(outputDir, mapName);
+    const final = join(outputDir, `${outputBase}.glb`);
+    temporaryOutput = temporaryGlbPath(outputDir, outputBase);
     await copyFile(best?.path ?? raw, temporaryOutput);
     await validateGlb(temporaryOutput);
     await rename(temporaryOutput, final);

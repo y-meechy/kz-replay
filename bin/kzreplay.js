@@ -184,6 +184,15 @@ const commands = {
       toolsDir: join(ROOT, "tools"),
       outputDir: join(ROOT, "viewer", "public", "maps"),
       steamcmd: flags.steamcmd ?? "steamcmd",
+      // Experiment: --textures keeps the map's own materials, and writes to
+      // <map>.textured.glb so the geometry build is left alone.
+      withTextures: Boolean(flags.textures),
+      // --colors gives every surface a flat colour picked from the material name
+      // the mapper used. No textures are involved, and none are needed.
+      withColours: Boolean(flags.colors ?? flags.colours),
+      ...(flags["texture-size"]
+        ? { textureSize: Number(flags["texture-size"]) }
+        : {}),
       log: (message) => console.log(`  ${message}`),
     });
 
