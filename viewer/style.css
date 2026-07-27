@@ -768,21 +768,24 @@ body {
 .mhud__live {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
 }
 
+/* Twice the size of the phone layout at the bottom of this file, which is where
+   these numbers started. At this size the block of keys carries about the same
+   weight as the speed reading beside it, which is the proportion it has in game. */
 .mhud__keys {
   display: grid;
-  grid-template-columns: repeat(3, 15px);
-  gap: 3px;
+  grid-template-columns: repeat(3, 30px);
+  gap: 6px;
 }
 
 .mhud__key {
   display: grid;
   place-items: center;
-  height: 13px;
+  height: 26px;
   color: rgba(148, 163, 184, 0.45);
-  font-size: 11px;
+  font-size: 22px;
   font-weight: 700;
   line-height: 1;
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
@@ -800,9 +803,9 @@ body {
 
 .mhud__key:not(.is-held)::after {
   content: "";
-  width: 9px;
-  height: 2px;
-  border-radius: 1px;
+  width: 18px;
+  height: 4px;
+  border-radius: 2px;
   background: currentColor;
 }
 
@@ -1284,6 +1287,13 @@ body {
   .mhud__key {
     height: 11px;
     font-size: 10px;
+  }
+
+  /* The bar has to shrink with the key it sits in, or it is wider than its cell. */
+  .mhud__key:not(.is-held)::after {
+    width: 9px;
+    height: 2px;
+    border-radius: 1px;
   }
 
   .mhud__speed-value {
