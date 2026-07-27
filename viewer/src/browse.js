@@ -498,10 +498,23 @@ export const createBrowse = ({ root, onWatch }) => {
       const watchable = Object.values(entries).filter(
         (entry) => entry.watchable,
       ).length;
+      // The Source 2 Viewer credit belongs on the page, not only in the readme.
+      // Every map here was exported with it, and the layout of the Source 2 formats
+      // it reads is not documented by Valve — it is years of reverse engineering by
+      // other people. Nothing in this project worked that out.
       dom.foot.innerHTML = `
         ${watchable} watchable runs across ${Object.keys(entries).length} leaderboards ·
         ${Object.keys(geometry).length} maps converted to 3D ·
-        records updated ${new Date(boards.updatedAt ?? Date.now()).toLocaleString()}`;
+        records updated ${new Date(boards.updatedAt ?? Date.now()).toLocaleString()}
+        <br />
+        Map geometry powered by
+        <a href="https://s2v.app" target="_blank" rel="noopener">Source 2 Viewer</a>
+        (<a
+          href="https://github.com/ValveResourceFormat/ValveResourceFormat"
+          target="_blank"
+          rel="noopener"
+          >ValveResourceFormat</a
+        >). Maps belong to their mappers.`;
     },
     show() {
       root.hidden = false;
