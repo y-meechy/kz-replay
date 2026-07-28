@@ -26,6 +26,8 @@ npm run dev                             # http://localhost:5180
 
 Keys: `space` play/pause, `←` `→` step (hold shift for a second at a time), `C` camera.
 
+`/` is the map list, `/wr` is the world record feed, `/watch?ids=<id>` is one run.
+
 **Or convert a map without leaving the page.** When a run's map has not been
 converted, the viewer shows a **Convert this map** button. Pressing it asks the dev
 server to do the whole job — workshop download, geometry export, compression — and
@@ -80,18 +82,71 @@ otherwise bury the camera in solid rock; the inside cameras keep it opaque.
 
 ## Commands
 
-| Command                        | What it does                                            |
-| ------------------------------ | ------------------------------------------------------- |
-| `kzreplay wrs --limit 6`       | Fetch the current world records and build their tracks  |
-| `kzreplay fetch <record_id>`   | Fetch one record by id (also accepts a local file path) |
-| `kzreplay inspect <record_id>` | Dump the header, the section table and the timer events |
-| `kzreplay verify --limit 60`   | Parse many replays and report any that desync           |
-| `kzreplay map kz_victoria`     | Download and convert one map's geometry to a web glb    |
-| `kzreplay compare <a> <b>`     | Full stats for two runs, and where the time was lost    |
-| `npm run check`                | Alignment sanity check across four known run pairs      |
+| Command                        | What it does                                             |
+| ------------------------------ | -------------------------------------------------------- |
+| `kzreplay wrs --limit 6`       | Fetch the current world records and build their tracks   |
+| `kzreplay wrfeed`              | Rebuild the list the world record feed scrolls (4 calls) |
+| `kzreplay fetch <record_id>`   | Fetch one record by id (also accepts a local file path)  |
+| `kzreplay inspect <record_id>` | Dump the header, the section table and the timer events  |
+| `kzreplay verify --limit 60`   | Parse many replays and report any that desync            |
+| `kzreplay map kz_victoria`     | Download and convert one map's geometry to a web glb     |
+| `kzreplay compare <a> <b>`     | Full stats for two runs, and where the time was lost     |
+| `npm run check`                | Alignment sanity check across four known run pairs       |
 
 Tracks are written to `viewer/public/tracks/`, which the dev server reads directly.
 Downloaded `.replay` files are cached in `samples/` so re-runs need no network.
+
+## The world record feed
+
+`/wr` is the newest world records in the game, one screen each, scrolled like a
+phone feed. No map to pick, no course, no mode: it opens on the record that was set
+most recently and plays it through the runner's eyes, on loop, in the real map. Scroll
+for the one before it. **Open in player** hands the run to `/watch` with everything
+else — cameras, the timeline, the comparison.
+
+There are no controls on a feed card on purpose. A feed is for deciding whether a run
+is worth your attention, and every knob it could grow already exists one button away.
+
+Two things make sixty records affordable on a phone:
+
+- **One canvas and one renderer, not sixty.** The canvas sits under the cards and
+  draws whichever card is on screen. Every other card covers it with the map's Steam
+  picture, which is also what hides the previous run while you scroll past it.
+- **Nothing loads until the scroll settles**, and the _next_ run is fetched in the
+  background while you watch the current one, so a swipe usually has nothing to wait
+  for. A replay is a few hundred kilobytes and the browser caches it.
+
+The list itself is `viewer/public/data/wrs.json`, four API requests, rebuilt by the
+nightly refresh and by `kzreplay wrfeed`. Records whose replay file is gone are left
+out: browse has something honest to say about a record it cannot play, a feed does
+not.
+
+**Where the dates come from.** The API sorts records by submission date but never
+returns one. Record ids are UUIDv7, whose first 48 bits are the millisecond the id was
+made, so the date is in the id — and the ids come back in exactly the order the API's
+own sort puts them, which is the check that it is the right number rather than a
+plausible one.
+
+## Views
+
+Every run shows how many people have watched it: on a feed card, on the watch page,
+and in a map's sheet on the front page.
+
+A view is not a page load. It is counted once the run has actually played for a few
+seconds, and once per browser per run per six hours — so a reload, a mis-click, a link
+preview and scrolling back up the feed all add nothing. The browser keeps a random id
+of its own making so the server can tell a repeat from a new person without knowing
+anything about either, and the server keeps its own six hour memory of the same thing
+plus a generous per-address cap, which is what stops a loop in a console from being a
+free counter.
+
+The counts are one JSON file of integers in `KZ_STATE_DIR`, written a second after the
+last change. That is deliberately not `KZ_DATA_DIR`: everything in there is generated,
+replaceable, and reseeded from the image on first boot, and the one number visitors
+wrote must survive all three.
+
+    GET  /api/views?ids=<id>,<id>   counts for those runs, plus the total
+    POST /api/views/<id>            count one view
 
 ## Browsing and watching runs
 

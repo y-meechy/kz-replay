@@ -11,6 +11,9 @@ services:
       TZ: Europe/Berlin
       KZ_DATA_DIR: /data/catalog
       KZ_MAPS_DIR: /data/maps
+      # View counts. On the volume, because this is the only data the container
+      # cannot rebuild from the API.
+      KZ_STATE_DIR: /data/state
       KZ_TOOLS_DIR: /opt/kz-tools
     volumes:
       - /var/lib/kz-replay:/data

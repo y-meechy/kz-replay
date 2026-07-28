@@ -1407,3 +1407,454 @@ body {
 .browse__foot a:hover {
   color: var(--accent);
 }
+
+/* --- the world record feed ------------------------------------------------
+   One canvas under a column of full height slides, snapped so exactly one is on
+   screen. Every slide covers the canvas with the map's picture until it is the
+   slide being played, which is what lets sixty records share one renderer.
+
+   The slides let pointer events through to the canvas underneath, because
+   dragging to orbit the camera has to work anywhere on the screen. Only the
+   things you actually press take them back. */
+
+.reel {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+
+.reel__stage {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.reel__head {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 5;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 16px 20px;
+  background: linear-gradient(
+    to bottom,
+    rgba(7, 9, 15, 0.88),
+    rgba(7, 9, 15, 0)
+  );
+  pointer-events: none;
+}
+
+.reel__head > * {
+  pointer-events: auto;
+}
+
+.reel__heading {
+  flex: 1;
+  min-width: 0;
+}
+
+.reel__title {
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.reel__subtitle {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.reel__scroll {
+  position: absolute;
+  inset: 0;
+  overflow-y: scroll;
+  scroll-snap-type: y mandatory;
+  /* A feed scrolls the feed and nothing else: no pull-to-refresh, no scrolling
+     the page behind it on a phone. */
+  overscroll-behavior-y: contain;
+  scrollbar-width: none;
+}
+
+.reel__scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.reel__empty {
+  padding: 90px 22px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.reel__empty code {
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.slide {
+  position: relative;
+  height: 100dvh;
+  scroll-snap-align: start;
+  /* A fast flick must land on the next record, not skip four of them. */
+  scroll-snap-stop: always;
+  display: grid;
+  align-content: end;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* The map's Steam picture, dimmed and softened: it is a backdrop for the text and
+   a stand-in for the run, never the subject. Also the thing that hides the canvas
+   while another slide is playing on it. */
+.slide__poster {
+  position: absolute;
+  inset: 0;
+  background: var(--bg);
+  transition: opacity 0.45s ease;
+}
+
+.slide__poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.5;
+  filter: blur(2px) saturate(0.7);
+}
+
+.slide.is-playing .slide__poster {
+  opacity: 0;
+}
+
+.slide__body {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  gap: 7px;
+  justify-items: start;
+  max-width: 640px;
+  padding: 70px 18px calc(26px + env(safe-area-inset-bottom));
+  /* Legible over any map, including a white one. */
+  background: linear-gradient(
+    to top,
+    rgba(7, 9, 15, 0.93),
+    rgba(7, 9, 15, 0.5) 60%,
+    transparent
+  );
+  pointer-events: none;
+}
+
+.slide__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+/* Gold, and a chip rather than a .badge: .badge is absolutely positioned into the
+   corner of a map card's picture, which is not what this is. */
+.chip--wr {
+  border-color: rgba(253, 224, 71, 0.4);
+  background: rgba(253, 224, 71, 0.16);
+  color: #fde047;
+  font-weight: 700;
+}
+
+.slide__time {
+  font-size: clamp(38px, 9vw, 60px);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.slide__who {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.slide__where {
+  color: #cbd5e1;
+  font-size: 13px;
+}
+
+.slide__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.slide__status {
+  color: var(--accent);
+}
+
+/* The only control on a card. It opts back into pointer events, because the card
+   itself lets them through to the canvas. */
+.slide__actions {
+  display: flex;
+  margin-top: 8px;
+}
+
+.slide__actions .button {
+  min-height: 40px;
+  pointer-events: auto;
+}
+
+/* The live speed, in the KZ tradition of a big number and a small unit, kept out
+   of the way of the text at the bottom. */
+.slide__speed {
+  position: absolute;
+  top: 50%;
+  right: 18px;
+  z-index: 2;
+  display: grid;
+  justify-items: end;
+  transform: translateY(-50%);
+  color: #e2e8f0;
+  text-shadow: 0 1px 6px rgba(7, 9, 15, 0.9);
+  pointer-events: none;
+}
+
+.slide__speed b {
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.slide__speed small {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+}
+
+.slide__progress {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 3;
+  height: 3px;
+  background: rgba(148, 163, 184, 0.18);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.slide__progress i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left;
+}
+
+.slide.is-playing .slide__progress {
+  opacity: 1;
+}
+
+.slide:not(.is-playing) .slide__speed {
+  display: none;
+}
+
+/* The way into the feed from the front page. */
+.button--feed {
+  white-space: nowrap;
+}
+
+/* --- view counts ---------------------------------------------------------- */
+
+.watch-views {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  z-index: 4;
+  padding: 6px 11px;
+  border: 1px solid var(--edge);
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  backdrop-filter: blur(12px);
+}
+
+.sheet__views {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.sheet__views:empty {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .reel__head {
+    padding: 10px 12px 18px;
+  }
+
+  .slide__body {
+    padding: 60px 14px calc(20px + env(safe-area-inset-bottom));
+  }
+
+  .slide__speed b {
+    font-size: 26px;
+  }
+
+  .button--feed {
+    width: 100%;
+  }
+
+  /* Top left is the compare readout on a phone, and top right is the stats
+     button, so the count moves down to the free corner above the controls. */
+  .watch-views {
+    top: auto;
+    bottom: calc(var(--controls-space, 78px) + 12px);
+    left: 10px;
+  }
+}
+
+/* --- the front page on a phone --------------------------------------------
+   The desktop layout is a wide toolbar and a grid of 232 pixel cards, and on a
+   390 pixel screen that becomes one card per row: 82 maps is then 22,000 pixels
+   of scrolling to reach the end of the alphabet. Two columns, smaller type and
+   thumb sized controls fix that without a second layout to maintain. */
+
+@media (max-width: 560px) {
+  .browse {
+    padding: 14px 12px 44px;
+  }
+
+  .browse__head {
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+
+  .browse__logo {
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+    font-size: 12px;
+  }
+
+  .browse__title {
+    font-size: 16px;
+  }
+
+  /* The toolbar becomes a column, so the filter is as wide as the screen instead
+     of as wide as a desktop text field. */
+  .browse__tools {
+    display: grid;
+    gap: 10px;
+    width: 100%;
+  }
+
+  .browse__tools .input {
+    width: 100%;
+    min-height: 42px;
+  }
+
+  .checkbox {
+    min-height: 26px;
+    font-size: 13px;
+  }
+
+  .checkbox input {
+    width: 18px;
+    height: 18px;
+  }
+
+  .replay-entry {
+    gap: 10px;
+    padding: 12px;
+  }
+
+  /* Side by side, the field is too narrow to show a record id and the button
+     spills out of the box it is in. Stacked, both are full width. */
+  .replay-entry__form {
+    flex-direction: column;
+  }
+
+  .replay-entry__form .input,
+  .replay-entry__form .button {
+    width: 100%;
+    min-height: 42px;
+  }
+
+  .replay-entry__error:empty {
+    display: none;
+  }
+
+  .browse__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 9px;
+  }
+
+  .card-map {
+    border-radius: 11px;
+  }
+
+  .card-map__body {
+    padding: 8px 9px 10px;
+  }
+
+  .card-map__name {
+    font-size: 12.5px;
+  }
+
+  /* Two lines, always: the tier chip on one and the counts on the next. Wrapping
+     mid row made the cards in a row different heights. */
+  .card-map__meta {
+    margin-top: 5px;
+    gap: 3px 7px;
+    font-size: 10px;
+  }
+
+  .card-map__courses {
+    /* The course count is the least useful of the three on a small card. */
+    display: none;
+  }
+
+  .browse__foot {
+    margin-top: 20px;
+    font-size: 11px;
+  }
+
+  /* A dialog in the middle of a phone screen is a reach; at the bottom it is
+     where the thumb already is. */
+  .sheet {
+    padding: 0;
+    place-items: end stretch;
+  }
+
+  .sheet__box {
+    width: 100%;
+    max-height: 92dvh;
+    border-radius: 16px 16px 0 0;
+    border-bottom: 0;
+  }
+
+  .sheet__close {
+    width: 38px;
+    height: 38px;
+    font-size: 20px;
+  }
+
+  .sheet__compare-row .input,
+  .sheet__compare-row .button,
+  .sheet__picks .select {
+    min-height: 42px;
+  }
+
+  .button--wide {
+    min-height: 46px;
+  }
+}

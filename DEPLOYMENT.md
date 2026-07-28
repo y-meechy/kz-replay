@@ -2,9 +2,13 @@
 
 The production image is a Linux x64, Node 22 Debian container. It includes
 SteamCMD and ValveResourceFormat CLI 19.2 for the nightly map conversion job.
-Generated catalog files and finished maps persist on the host at
+Generated catalog files, finished maps and the view counter persist on the host at
 `/var/lib/kz-replay`; Steam Workshop downloads and conversion intermediates stay
 inside the replaceable container.
+
+Of those three, the view counter (`/var/lib/kz-replay/state/views.json`) is the only
+one that cannot be rebuilt from the CS2KZ API. Back that file up; the rest is
+reproducible.
 
 The host nginx configuration for `preview-v2.kzcomp.com` already proxies to
 `localhost:8081`. Docker publishes that port on loopback only.
@@ -39,9 +43,9 @@ docker compose -f docker-compose.prod.yml ps
 curl --fail --show-error http://127.0.0.1:8081/healthz
 ```
 
-The health response is JSON and reports whether a refresh is running and the
-result of the last refresh. Docker also checks `/healthz` inside the container
-every 30 seconds.
+The health response is JSON and reports whether a refresh is running, the result
+of the last refresh, and how many runs and views the counter holds. Docker also
+checks `/healthz` inside the container every 30 seconds.
 
 ## Automatic deployment
 
@@ -100,7 +104,7 @@ docker compose -f docker-compose.prod.yml ps
 curl --fail --show-error http://127.0.0.1:8081/healthz
 ```
 
-The bind-mounted catalog and converted maps remain in
+The bind-mounted catalog, converted maps and view counts remain in
 `/var/lib/kz-replay`. Do not scale the service above one instance: each instance
 would schedule its own refresh job.
 

@@ -1,10 +1,12 @@
-// Three pages, one document: browse the maps, watch a run, or read the docs.
+// Four pages, one document: browse the maps, scroll the world record feed, watch a
+// run, or read the docs.
 //
 // The url is the whole state. That means every run is a link you can send someone,
 // the back button works, and a reload lands where you were, none of which is true
 // if the view lives in a variable.
 //
 //   /                                          the map list
+//   /wr[?id=<id>]                              the world record feed
 //   /watch?ids=<id>[,<id>]&view=pov|follow|orbit
 //   /docs                                      how to build those links
 //
@@ -20,8 +22,11 @@ import { loadRunById, parseRecordIds } from "./src/loadRun.js";
 import { buildInsights } from "./src/insights.js";
 import { createAnalysisPanel } from "./src/analysisPanel.js";
 import { createBrowse } from "./src/browse.js";
+import { createWrFeed } from "./src/wrFeed.js";
 import { createMhud } from "./src/mhud.js";
+import { findMapFile } from "./src/mapFile.js";
 import { formatDelta, formatRunTime } from "./src/format.js";
+import { createViewTicker, fetchViews, viewsLabel } from "./src/views.js";
 
 const el = (id) => document.getElementById(id);
 
@@ -99,6 +104,10 @@ const readRoute = () => {
   const params = new URLSearchParams(window.location.search);
 
   if (path === "/docs") return { page: "docs", ids: [], dropped: 0 };
+  if (path === "/wr") {
+    // The feed's own id parameter: which record it is scrolled to.
+    return { page: "wr", ids: [], dropped: 0, feedId: params.get("id") };
+  }
   if (path !== "/watch") return { page: "browse", ids: [], dropped: 0 };
 
   const requested = params.get("view");
@@ -121,6 +130,7 @@ const navigate = (url, { replace = false } = {}) => {
 // Looked up once. updateHud() runs on every rendered frame, so it must not go
 // hunting through the document sixty times a second.
 const browseRoot = el("browse");
+const feedRoot = el("wr");
 const watchRoot = el("watch");
 const docsRoot = el("docs");
 const stage = el("stage");
@@ -157,6 +167,7 @@ const watchCompareButton = el("watch-compare-button");
 const watchCompareError = el("watch-compare-error");
 const statsPanel = el("stats");
 const statsToggle = el("stats-toggle");
+const watchViews = el("watch-views");
 const controls = document.querySelector(".controls");
 const mhudToggle = el("mhud-toggle");
 const mhudCheck = el("mhud-check");
@@ -177,11 +188,25 @@ let activeRivalMeta = null;
 let insights = null;
 let selectedPov = "main";
 let statsOpen = false;
+// Watches the frames of the run being played and counts a view once it has really
+// been watched. One per loaded run.
+let viewTicker = null;
 // Set while a rival is loaded: the shared distance axis both runs are measured on.
 let alignment = null;
 // Clicking through runs faster than they load would otherwise leave two players
 // rendering into the same canvas, so late arrivals are dropped.
 let loadToken = 0;
+
+/**
+ * The view count for the run being watched.
+ *
+ * Shown even when it is zero: someone has to be the first person to watch a run, and
+ * "0 views" is a true thing to say about it. Only an unknown count is hidden.
+ */
+const showWatchViews = (count) => {
+  watchViews.textContent = viewsLabel(count);
+  watchViews.hidden = false;
+};
 
 const setStatsOpen = (open) => {
   statsOpen = open;
@@ -404,6 +429,7 @@ const updateHud = (frame) => {
 
   mhud.update(frame);
   updateCompareReadout(frame);
+  viewTicker?.frame(frame);
 };
 
 // --- map geometry -----------------------------------------------------------
@@ -419,9 +445,8 @@ const loadMapFor = async (meta, token) => {
   }
 
   mapStatus.textContent = "checking…";
-  const url = `/maps/${meta.map}.glb`;
-  const head = await fetch(url, { method: "HEAD" }).catch(() => null);
-  if (!head?.ok) {
+  const file = await findMapFile(`/maps/${meta.map}.glb`);
+  if (!file) {
     mapStatus.textContent = "not converted yet";
     // Only the dev server can convert: it needs steamcmd and the Valve tools.
     if (import.meta.env.DEV) {
@@ -433,10 +458,9 @@ const loadMapFor = async (meta, token) => {
     return;
   }
 
-  const megabytes = Number(head.headers.get("content-length") ?? 0) / 1e6;
-  mapStatus.textContent = `loading ${megabytes.toFixed(1)} MB…`;
+  mapStatus.textContent = `loading ${file.megabytes.toFixed(1)} MB…`;
   try {
-    const { triangles } = await player.loadMap(url);
+    const { triangles } = await player.loadMap(file.url);
     if (token !== loadToken) return;
     mapToggle.disabled = false;
     mapToggle.checked = true;
@@ -583,6 +607,9 @@ const openRun = async (
   }
   setStatsOpen(false);
   const token = ++loadToken;
+  viewTicker?.stop();
+  viewTicker = null;
+  watchViews.hidden = true;
   loading.classList.remove("is-hidden");
   loading.textContent = "loading run…";
   compareError.hidden = true;
@@ -624,6 +651,19 @@ const openRun = async (
     });
     if (import.meta.env.DEV) window.__kzPlayer = player;
 
+    // The count is for the run the link opened, which is the one the timeline and the
+    // clock belong to as well.
+    fetchViews([recordId]).then(({ views }) => {
+      if (token === loadToken) showWatchViews(views[recordId] ?? 0);
+    });
+    viewTicker = createViewTicker({
+      recordId,
+      duration: run.meta.reportedTime ?? run.track.durationSeconds,
+      onCounted: (count) => {
+        if (token === loadToken) showWatchViews(count);
+      },
+    });
+
     showPlaying(true);
     setActiveButton(rates, "rate", "1");
     // Replays are meant to be watched through the runner's eyes, so a link that says
@@ -660,6 +700,9 @@ const leaveWatch = () => {
   loadToken += 1;
   player?.dispose();
   player = null;
+  viewTicker?.stop();
+  viewTicker = null;
+  watchViews.hidden = true;
   activeId = null;
   activeRival = null;
   activeLaunchIntent = null;
@@ -803,6 +846,16 @@ const browse = createBrowse({
         rivalId ? null : notice,
       ),
     ),
+  onFeed: () => navigate("/wr"),
+});
+
+const feed = createWrFeed({
+  root: feedRoot,
+  // The feed shares the run cache with the player, so opening the run you were just
+  // watching in the feed costs nothing: the replay is already parsed.
+  getRun,
+  onOpenInPlayer: ({ recordId, view }) => navigate(watchUrl([recordId], view)),
+  onBack: () => navigate("/"),
 });
 
 const route = () => {
@@ -814,7 +867,17 @@ const route = () => {
     return;
   }
 
-  const { page, ids, view, notice, dropped } = readRoute();
+  const { page, ids, view, notice, dropped, feedId } = readRoute();
+
+  if (page === "wr") {
+    docsRoot.hidden = true;
+    watchRoot.hidden = true;
+    leaveWatch();
+    browse.hide();
+    feed.show(feedId);
+    return;
+  }
+  feed.hide();
 
   if (page === "watch") {
     docsRoot.hidden = true;
@@ -849,5 +912,6 @@ window.addEventListener("popstate", route);
 window.addEventListener("hashchange", route);
 
 setMhud(mhudOn);
-await browse.load();
+// Both lists are static files, so they load together and neither waits for the other.
+await Promise.all([browse.load(), feed.load()]);
 route();
