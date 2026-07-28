@@ -1,26 +1,40 @@
 // Everything derived from two runs, ready to plot.
 //
-// The one idea worth understanding: a run is only ever measured against another at
-// the same DISTANCE along the course, never at the same moment in time. Every
-// series below therefore has course distance on its x axis.
+// Two ideas hold this together.
 //
-// The decomposition in sectorBreakdown() is the piece that actually explains a
-// gap. Time is distance over speed, so losing time can only come from two places:
-// travelling further, or travelling slower. Splitting each sector into those two
-// numbers turns "you lost 0.58s here" into "0.12s of it was a wider line and
-// 0.46s was simply less speed", which is the difference between a routing mistake
-// and a movement mistake.
+// The plotted series are only ever measured at the same DISTANCE along the course,
+// never at the same moment in time, so every trace below has course distance on its
+// x axis.
+//
+// The numbers that explain the gap come from sections.js instead: the course cut at
+// places both runs touched the ground, timed on each run's own clock. Those are
+// events that really happened in both runs, so a section time owes nothing to how
+// well the two lines were matched up, and the deltas add up to the final gap.
+//
+// Each section also splits its delta two ways. Time is distance over speed, so
+// losing time can only come from travelling further or travelling slower. That turns
+// "you lost 0.39s here" into "0.24s of it was a wider line and 0.15s was less
+// speed", which is the difference between a routing mistake and a movement mistake.
 
 import {
   alignPaths,
   buildPath,
   deltaCurve,
   indexAtDistance,
-  timeAtDistance,
 } from "../../src/compare.js";
+import { blameOf, buildSections } from "../../src/sections.js";
 import { TRACK_FLAG } from "../../src/track.js";
 
 const pathOfTrack = (track) => buildPath(track.positions, track.count);
+
+/**
+ * Whether a run was standing on something, by index along its path.
+ *
+ * A .kztrack has one entry per recorded tick, so the path index and the flag index
+ * are the same thing here. The CLI has to map between the two.
+ */
+const onGroundOf = (track) => (index) =>
+  (track.flags[index] & TRACK_FLAG.ONGROUND) !== 0;
 
 const sampleTrack = (track, progress, distance, tickRate) => {
   const index = indexAtDistance(progress, distance);
@@ -36,84 +50,14 @@ const sampleTrack = (track, progress, distance, tickRate) => {
 };
 
 /**
- * Time each run spent in each sector, split into how much of any difference came
- * from the line taken and how much from raw speed.
- *
- * The two costs add up to the sector delta exactly, by construction:
- *   Δt = (distB - distA)/vA  +  distB·(1/vB - 1/vA)
- */
-const sectorBreakdown = ({
-  reference,
-  challenger,
-  referencePath,
-  challengerPath,
-  challengerProgress,
-  courseLength,
-  sectorCount,
-  tickRate,
-}) => {
-  const sectors = [];
-
-  for (let s = 0; s < sectorCount; s++) {
-    const from = (courseLength * s) / sectorCount;
-    const to = (courseLength * (s + 1)) / sectorCount;
-
-    const refStartTime = timeAtDistance(
-      referencePath.cumulative,
-      from,
-      tickRate,
-    );
-    const refEndTime = timeAtDistance(referencePath.cumulative, to, tickRate);
-    const chalStartTime = timeAtDistance(challengerProgress, from, tickRate);
-    const chalEndTime = timeAtDistance(challengerProgress, to, tickRate);
-
-    const refTime = Math.max(refEndTime - refStartTime, 1e-6);
-    const chalTime = Math.max(chalEndTime - chalStartTime, 1e-6);
-
-    // How far each run actually travelled to cross this sector.
-    const refDistance = to - from;
-    const chalStartIndex = indexAtDistance(challengerProgress, from);
-    const chalEndIndex = indexAtDistance(challengerProgress, to);
-    const chalDistance = Math.max(
-      challengerPath.cumulative[chalEndIndex] -
-        challengerPath.cumulative[chalStartIndex],
-      1e-6,
-    );
-
-    const refSpeed = refDistance / refTime;
-    const chalSpeed = chalDistance / chalTime;
-
-    sectors.push({
-      sector: s + 1,
-      from,
-      to,
-      referenceTime: refTime,
-      challengerTime: chalTime,
-      delta: chalTime - refTime,
-      referenceDistance: refDistance,
-      challengerDistance: chalDistance,
-      referenceSpeed: refSpeed,
-      challengerSpeed: chalSpeed,
-      // Cost of the extra ground covered, priced at the reference's speed.
-      routeCost: (chalDistance - refDistance) / refSpeed,
-      // Cost of being slower, over the distance actually covered.
-      speedCost: chalDistance * (1 / chalSpeed - 1 / refSpeed),
-      referenceStartTime: refStartTime,
-      challengerStartTime: chalStartTime,
-    });
-  }
-
-  return sectors;
-};
-
-/**
- * Moving average over the delta curve, used before hunting for swings.
+ * Moving average over the delta curve, for drawing only.
  *
  * Two kinds of noise sit on the raw curve. Time only exists at tick resolution, so
  * every sample is quantised by about 16 ms; and where the reference line wiggles,
  * the nearest-point projection can flick between passes of the wiggle, moving the
- * matched course position by tens of units. Neither is a mistake by the player, but
- * both are big enough to fake a two-tenths "moment" if you difference the raw curve.
+ * matched course position by tens of units. Neither is a mistake by the player, and
+ * a chart full of both is harder to read for no gain. No number is taken off this
+ * curve — the sections do that — so smoothing it costs nothing.
  */
 const smoothDelta = (curve, window = 5) => {
   const half = Math.floor(window / 2);
@@ -130,95 +74,59 @@ const smoothDelta = (curve, window = 5) => {
 };
 
 /**
- * The moments that actually cost the run.
+ * The sections worth marking on the chart and the timeline, biggest first.
  *
- * Slides a window along the delta curve and ranks by how much the gap grew inside
- * it, then keeps the worst non-overlapping ones. A ranking of sectors would miss a
- * loss that straddles a sector boundary; a window does not care where the
- * boundaries are.
+ * A section time is an exact tick count, so the noise floor here is honest: two
+ * ticks. Below that there is nothing to look at, and two runs that are genuinely the
+ * same should leave the chart clean rather than covered in confident red bands.
  */
-const findSwings = ({
-  curve,
-  windowSamples,
-  limit,
-  losses,
-  reference,
-  challenger,
-  referencePath,
-  challengerProgress,
-  tickRate,
-}) => {
-  const candidates = [];
-  for (let i = 0; i + windowSamples < curve.length; i++) {
-    const start = curve[i];
-    const end = curve[i + windowSamples];
-    candidates.push({
-      startIndex: i,
-      endIndex: i + windowSamples,
-      // Positive: the gap grew, so the challenger lost time in this window.
-      gained: end.delta - start.delta,
-    });
+const findHighlights = (sections, tickRate, { losses, limit }) => {
+  const floor = 2 / tickRate;
+  return sections
+    .filter((section) =>
+      losses ? section.delta >= floor : section.delta <= -floor,
+    )
+    .sort((a, b) => (losses ? b.delta - a.delta : a.delta - b.delta))
+    .slice(0, limit)
+    .map((section) => ({
+      section: section.section,
+      fromDistance: section.fromDistance,
+      toDistance: section.toDistance,
+      /** Positive: time the challenger lost. Negative: time it took back. */
+      secondsLost: section.delta,
+      referenceTime: section.referenceFromTime,
+      challengerTime: section.challengerFromTime,
+      referenceToTime: section.referenceToTime,
+      challengerToTime: section.challengerToTime,
+      // Which half of the split is doing the work, for a one-line explanation.
+      blame: blameOf(section) === "line" ? "a longer line" : "less speed",
+    }));
+};
+
+/**
+ * Why these two runs might not be comparable at all, or null if they are.
+ *
+ * Two runs on the same named course can still be incomparable: a route the other
+ * player never took, or a map republished with different geometry. Say so rather than
+ * plotting a delta curve built on a bad match.
+ *
+ * Checked worst first, and only one is shown: a bad match sets off all three, and
+ * three warnings about one problem read like three problems.
+ */
+const comparabilityWarning = ({ coverage, medianDeviation, touches }) => {
+  if (coverage < 0.9) {
+    return `only ${(coverage * 100).toFixed(0)}% of the reference route could be followed in the other run`;
   }
-  // Worst losses first, or biggest gains first, depending on what was asked for.
-  candidates.sort((a, b) =>
-    losses ? b.gained - a.gained : a.gained - b.gained,
-  );
-
-  const chosen = [];
-  for (const candidate of candidates) {
-    if (losses ? candidate.gained <= 0.005 : candidate.gained >= -0.005) break;
-    const overlaps = chosen.some(
-      (kept) =>
-        candidate.startIndex < kept.endIndex &&
-        candidate.endIndex > kept.startIndex,
-    );
-    if (overlaps) continue;
-    chosen.push(candidate);
-    if (chosen.length >= limit) break;
+  if (medianDeviation > 200) {
+    return `the two runs are a median of ${medianDeviation.toFixed(0)} units apart, so they are not really on the same line`;
   }
-
-  return chosen
-    .sort((a, b) => a.startIndex - b.startIndex)
-    .map((window) => {
-      const start = curve[window.startIndex];
-      const end = curve[window.endIndex];
-      const midDistance = (start.distance + end.distance) / 2;
-      const ref = sampleTrack(
-        reference.track,
-        referencePath.cumulative,
-        midDistance,
-        tickRate,
-      );
-      const chal = sampleTrack(
-        challenger.track,
-        challengerProgress,
-        midDistance,
-        tickRate,
-      );
-
-      // What was going on: a slow landing reads very differently from a slow
-      // stretch of air, and the fix is different too.
-      const state =
-        !ref.onGround && !chal.onGround
-          ? "in the air"
-          : chal.onGround && !ref.onGround
-            ? "on the ground while the other was still flying"
-            : "on the ground";
-
-      return {
-        fromDistance: start.distance,
-        toDistance: end.distance,
-        atProgress: (start.progress + end.progress) / 2,
-        // Positive: time the challenger lost. Negative: time it took back.
-        secondsLost: end.delta - start.delta,
-        referenceTime: start.timeReference,
-        challengerTime: start.timeChallenger,
-        referenceSpeed: ref.speed,
-        challengerSpeed: chal.speed,
-        speedDeficit: chal.speed - ref.speed,
-        state,
-      };
-    });
+  // Barely any shared landings is the same story told a different way, and it is the
+  // one that matters here: with nothing shared to cut the course at, the sections
+  // stop being places and become arbitrary distance slices.
+  if (touches.matchedFraction < 0.4) {
+    return `the two runs only touched down in the same place ${(touches.matchedFraction * 100).toFixed(0)}% of the time, so the sections below are guesses`;
+  }
+  return null;
 };
 
 /** Share of ticks in each speed bucket, as a percentage. */
@@ -242,12 +150,7 @@ const speedHistogram = (track, bucketSize = 25) => {
 export const buildInsights = (
   reference,
   challenger,
-  {
-    samples = 240,
-    sectorCount = 20,
-    lossWindowSamples = 8,
-    lossMoments = 6,
-  } = {},
+  { samples = 240, minSeconds = 1.5, maxSeconds = 5, highlights = 3 } = {},
 ) => {
   const tickRate = reference.track.tickRate;
   const referencePath = pathOfTrack(reference.track);
@@ -298,34 +201,28 @@ export const buildInsights = (
     traces.speedDelta.push(chal.speed - ref.speed);
     traces.referenceHeight.push(ref.height);
     traces.challengerHeight.push(chal.height);
-    // The plotted curve is the smoothed one, so what the chart shows and what the
-    // highlights were found in are the same thing.
     traces.delta.push(smoothed[index].delta);
   }
 
-  const sectors = sectorBreakdown({
-    reference,
-    challenger,
+  const { sections, touches } = buildSections({
     referencePath,
     challengerPath,
     challengerProgress,
-    courseLength,
-    sectorCount,
+    referenceOnGround: onGroundOf(reference.track),
+    challengerOnGround: onGroundOf(challenger.track),
     tickRate,
+    minSeconds,
+    maxSeconds,
   });
 
-  const swingArgs = {
-    curve: smoothed,
-    windowSamples: lossWindowSamples,
-    limit: lossMoments,
-    reference,
-    challenger,
-    referencePath,
-    challengerProgress,
-    tickRate,
-  };
-  const moments = findSwings({ ...swingArgs, losses: true });
-  const gains = findSwings({ ...swingArgs, losses: false });
+  const worst = findHighlights(sections, tickRate, {
+    losses: true,
+    limit: highlights,
+  });
+  const best = findHighlights(sections, tickRate, {
+    losses: false,
+    limit: highlights,
+  });
 
   // Jumps placed on the shared axis, so a weak jump can be blamed on a place.
   const jumpsOf = (run, progress) =>
@@ -341,11 +238,11 @@ export const buildInsights = (
       perf: jump.perf,
     }));
 
-  const totals = sectors.reduce(
-    (sum, sector) => ({
-      route: sum.route + sector.routeCost,
-      speed: sum.speed + sector.speedCost,
-      delta: sum.delta + sector.delta,
+  const totals = sections.reduce(
+    (sum, section) => ({
+      route: sum.route + section.routeCost,
+      speed: sum.speed + section.speedCost,
+      delta: sum.delta + section.delta,
     }),
     { route: 0, speed: 0, delta: 0 },
   );
@@ -356,18 +253,8 @@ export const buildInsights = (
   const referenceLength = referencePath.cumulative.at(-1);
   const coverage = courseLength / Math.max(referenceLength, 1);
 
-  // Two runs on the same named course can still be incomparable: a route the other
-  // player never took, or a map republished with different geometry. Say so rather
-  // than plotting a delta curve built on a bad match.
-  const warning =
-    coverage < 0.9
-      ? `only ${(coverage * 100).toFixed(0)}% of the reference route could be followed in the other run`
-      : medianDeviation > 200
-        ? `the two runs are a median of ${medianDeviation.toFixed(0)} units apart, so they are not really on the same line`
-        : null;
-
   return {
-    warning,
+    warning: comparabilityWarning({ coverage, medianDeviation, touches }),
     coverage,
     reference,
     challenger,
@@ -375,11 +262,13 @@ export const buildInsights = (
     courseLength,
     curve,
     traces,
-    sectors,
-    moments,
-    gains,
-    /** Losses and gains together, biggest swing first. */
-    swings: [...moments, ...gains].sort(
+    sections,
+    touches,
+    /** The worst sections, and the best, for shading and for the headline. */
+    worst,
+    best,
+    /** Losses and gains together, biggest first. */
+    highlights: [...worst, ...best].sort(
       (a, b) => Math.abs(b.secondsLost) - Math.abs(a.secondsLost),
     ),
     totals,

@@ -1,10 +1,17 @@
 #!/usr/bin/env node
-// Sanity check for the run alignment, which has no other test.
+// Sanity check for the run alignment and the section table, which have no other test.
 //
-// The invariant: adding up the per-sector time differences must reproduce the gap
-// between the two finish times. It holds only if every challenger tick is placed at
-// the right point on the reference's course, so a projection that snaps forward
-// breaks it loudly. That is exactly the bug this script exists to catch.
+// Two invariants, and they check different things.
+//
+// The sections must telescope: their deltas are differences of times on each run's
+// own clock, so adding them up has to give the gap between the two finish times
+// exactly. This catches a boundary placed out of order, or a section handed a time
+// from the wrong run.
+//
+// The alignment is checked separately, by whether the delta curve ends up at the real
+// finishing gap. That one holds only if every challenger tick is placed at the right
+// point on the reference's course, so a projection that snaps forward breaks it
+// loudly. That is the bug this script was originally written for.
 
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -63,44 +70,57 @@ for (const [label, referenceId, challengerId] of PAIRS) {
   ]);
   const comparison = compareRuns(reference, challenger);
 
-  const sectorSum = comparison.sectors.reduce(
-    (total, sector) => total + sector.delta,
+  const { sections, touches, finalDelta } = comparison;
+  const sectionSum = sections.reduce(
+    (total, section) => total + section.delta,
     0,
   );
-  const finalDelta = comparison.finalDelta;
-  // The last curve sample is the gap at the end of the compared stretch. Sectors
-  // cover exactly that stretch, so the two must agree to the interpolation error.
+  // Both runs' clocks start at their first recorded tick, so the telescoping sum
+  // lands on the difference in recorded length. Counted in ticks, not read off
+  // durationSeconds: that one is rounded for display, and this check wants to see
+  // an error of zero rather than an error of "however toFixed went".
+  const tickGap =
+    (challenger.timing.ticks - reference.timing.ticks) /
+    reference.timing.tickRate;
+  const telescopeError = Math.abs(sectionSum - tickGap);
+  const reportedError = Math.abs(sectionSum - finalDelta);
+  const backwards = sections.filter(
+    (section) => section.referenceTime < 0 || section.challengerTime < 0,
+  ).length;
+
+  // The last curve sample is the gap at the end of the compared stretch, which is
+  // where the alignment is judged rather than the sections.
   const gapAtEnd = comparison.curve.at(-1).delta;
-  const internalError = Math.abs(sectorSum - gapAtEnd);
   // How much of each run the compared stretch actually covers. A gap here is not an
   // alignment fault, it means one run's path could not be followed to the end.
   const coverage = comparison.courseLength / comparison.referenceLength;
   const finishError = Math.abs(gapAtEnd - finalDelta);
 
-  const biggestSwing = Math.max(
-    ...comparison.sectors.map((sector) => Math.abs(sector.delta)),
-  );
-  const runLength = reference.run.reportedTime;
-
   const ok =
-    internalError <= 2 / 64 &&
+    telescopeError <= 1e-6 &&
+    backwards === 0 &&
+    reportedError <= 2 / 64 &&
+    touches.matchedFraction > 0.5 &&
     coverage > 0.97 &&
-    finishError <= 2 / 64 + Math.abs(finalDelta) * 0.05 &&
-    biggestSwing < runLength * 0.25;
+    finishError <= 2 / 64 + Math.abs(finalDelta) * 0.05;
   if (!ok) failures += 1;
 
   console.log(
     `${ok ? "ok  " : "FAIL"} ${label.padEnd(22)} ` +
-      `final ${finalDelta.toFixed(3)}s  gap@end ${gapAtEnd.toFixed(3)}s  ` +
-      `sectors ${sectorSum.toFixed(3)}s  internal ${internalError.toFixed(4)}s  ` +
-      `coverage ${(coverage * 100).toFixed(1)}%  ` +
-      `worst sector ${biggestSwing.toFixed(3)}s  line gap ${comparison.line.medianDeviation}u`,
+      `final ${finalDelta.toFixed(3)}s  sections ${sectionSum.toFixed(3)}s  ` +
+      `telescope ${telescopeError.toExponential(0)}  ` +
+      `vs reported ${reportedError.toFixed(4)}s  ` +
+      `${sections.length} sections, ${(touches.landingFraction * 100).toFixed(0)}% on a landing, ` +
+      `${(touches.matchedFraction * 100).toFixed(0)}% of touchdowns shared  ` +
+      `gap@end ${gapAtEnd.toFixed(3)}s  coverage ${(coverage * 100).toFixed(1)}%  ` +
+      `line gap ${comparison.line.medianDeviation}u`,
   );
 }
 
 console.log(
   failures === 0
     ? "\nall pairs consistent"
-    : `\n${failures} pair(s) inconsistent — the alignment is placing ticks wrongly`,
+    : `\n${failures} pair(s) inconsistent — the sections do not add up, or the ` +
+        "alignment is placing ticks wrongly",
 );
 process.exitCode = failures === 0 ? 0 : 1;
