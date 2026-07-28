@@ -442,6 +442,9 @@ export const convertMap = async ({
       `dropped ${trim.meshesRemoved} foliage meshes (${((trim.trianglesRemoved / Math.max(trim.trianglesBefore, 1)) * 100).toFixed(0)}% of triangles) ` +
         `and ${trim.attributesDropped.length} unused attribute streams`,
     );
+    if (trim.morphTargetsRemoved) {
+      log(`dropped ${trim.morphTargetsRemoved} morph targets nothing animates`);
+    }
     if (trim.untexturedMaterials || trim.untexturedSurfaces) {
       log(
         `${trim.untexturedSurfaces} surface(s) and ${trim.untexturedMaterials} material(s) ` +
@@ -546,7 +549,12 @@ export const convertMap = async ({
     // The baked lighting, when the .glb could not carry it. Same reasoning as the sky:
     // a sibling file, and the viewer treating a missing one as "not lit".
     const lightPath = join(outputDir, `${mapName}.light.webp`);
-    if (lightmap && withTextures) {
+    // Only when it reaches something. A map can have a lightmap set and no surface that
+    // addresses it — kz_dojo's reaches none of its 205 — and shipping 200 KB of atlas
+    // that nothing can look up is both waste and a trap: the viewer used to attach it to
+    // every textured material, including geometry with no atlas UV to look it up with,
+    // and three.js throws out of the render loop when asked to draw that.
+    if (lightmap && withTextures && trim.lightmap?.lit > 0) {
       await writeFile(
         lightPath,
         await sharp(lightmap.png).webp({ quality: 85 }).toBuffer(),

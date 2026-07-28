@@ -501,10 +501,30 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
   // Set the moment the first baked-light material is adopted, so the load below knows
   // to turn the scene's own lights down without walking the materials again.
   let adoptedBakedLight = false;
-  const adoptMapMaterial = (material) => {
-    let adopted = adoptedMaterials.get(material.uuid);
+  // The variants that may be given the map's baked lighting later: the ones drawn on
+  // geometry that actually carries the atlas UV.
+  const lightMapCandidates = new Set();
+
+  /**
+   * @param canBeLit whether the geometry drawing this has the atlas UV (`uv1`).
+   *
+   * A material is shared between many surfaces, and on most maps not all of them are
+   * lightmapped — kz_dojo's baked lighting reaches none of its 205 surfaces, and props
+   * never carry the atlas UV anywhere. So the two cases get separate materials, cloned
+   * on demand, and only one of them is ever given a light map.
+   *
+   * Not a nicety. Telling three.js a material has a light map when the geometry has no
+   * `uv1` to look it up with throws out of the render loop, and the replay stops dead
+   * mid-playback with nothing on screen to say why.
+   */
+  const adoptMapMaterial = (material, canBeLit) => {
+    const key = `${material.uuid}${canBeLit ? ":lit" : ""}`;
+    let adopted = adoptedMaterials.get(key);
     if (!adopted) {
-      adopted = material;
+      adopted = adoptedMaterials.has(material.uuid)
+        ? material.clone()
+        : material;
+      if (canBeLit) lightMapCandidates.add(adopted);
       adopted.side = THREE.FrontSide;
       adopted.roughness = 1;
       adopted.metalness = 0;
@@ -526,7 +546,7 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
       adopted.opacity = ghosted === true ? 0.35 : 1;
       adopted.depthWrite = ghosted !== true;
       adopted.needsUpdate = true;
-      adoptedMaterials.set(material.uuid, adopted);
+      adoptedMaterials.set(key, adopted);
     }
     return adopted;
   };
@@ -571,30 +591,30 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
    * Silent on failure, like the sky: a map converted with no lighting, or with the
    * lighting embedded because it had no textures, simply has no file to fetch.
    */
-  const loadBakedLight = (mapUrl) => {
+  const loadBakedLight = async (mapUrl) => {
     const url = mapUrl.replace(/\.glb(\?.*)?$/, ".light.webp");
     if (url === mapUrl) return;
-    new THREE.TextureLoader().load(
-      url,
-      (texture) => {
-        texture.colorSpace = THREE.SRGBColorSpace;
-        // three.js calls the second UV set `uv1`, which is where a light map looks by
-        // default — but only if it is told, because the default channel is 1 and the
-        // lightmapped-only build puts the atlas on set 0.
-        texture.channel = 1;
-        let attached = 0;
-        for (const material of adoptedMaterials.values()) {
-          if (!material.map || material.lightMap) continue;
-          material.lightMap = texture;
-          material.lightMapIntensity = BAKED_LIGHT_GAIN;
-          material.needsUpdate = true;
-          attached += 1;
-        }
-        if (attached) dimSceneLightsForBakedMap();
-      },
-      undefined,
-      () => {},
-    );
+    const texture = await new Promise((resolve) => {
+      new THREE.TextureLoader().load(url, resolve, undefined, () =>
+        resolve(null),
+      );
+    });
+    if (!texture) return;
+
+    texture.colorSpace = THREE.SRGBColorSpace;
+    // three.js calls the second UV set `uv1`, which is where a light map looks by
+    // default — but only if it is told, because the default channel is 1 and the
+    // lightmapped-only build puts the atlas on set 0.
+    texture.channel = 1;
+    let attached = 0;
+    for (const material of lightMapCandidates) {
+      if (!material.map || material.lightMap) continue;
+      material.lightMap = texture;
+      material.lightMapIntensity = BAKED_LIGHT_GAIN;
+      material.needsUpdate = true;
+      attached += 1;
+    }
+    if (attached) dimSceneLightsForBakedMap();
   };
 
   const loadMap = (url) =>
@@ -619,9 +639,25 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
             // the material the mapper used. Keep those and only match them to the
             // scene's lighting; a map with none still gets the plain concrete.
             object.material = object.material?.isMeshStandardMaterial
-              ? adoptMapMaterial(object.material)
+              ? adoptMapMaterial(
+                  object.material,
+                  object.geometry.hasAttribute("uv1"),
+                )
               : mapMaterial;
             object.frustumCulled = true;
+
+            // A mesh with morph targets and no influences to blend them with kills the
+            // renderer: three.js takes the morph path for any geometry that has targets,
+            // reads an array the loader never created, and throws out of the render loop
+            // the first frame that mesh is drawn — which is when the camera happens to
+            // turn towards it. src/trimMap.js drops targets now, but every map converted
+            // before that still carries them, so they are dropped here too.
+            if (
+              object.geometry.morphAttributes &&
+              !object.morphTargetInfluences
+            ) {
+              object.geometry.morphAttributes = {};
+            }
             const index = object.geometry.getIndex();
             triangles +=
               (index
@@ -634,17 +670,35 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
           if (adoptedBakedLight) {
             dimSceneLightsForBakedMap();
           }
-          // The map's own sky and its own baked lighting, if the conversion found
-          // them. Kicked off here rather than awaited: both are small, and a map
-          // should not wait behind either.
+
+          // The sky is only a background, so it can arrive whenever it likes.
           loadSky(url);
-          loadBakedLight(url);
-          mapGroup.add(gltf.scene);
-          mapGroup.visible = true;
-          grid.visible = false;
-          // With walls to hide behind, near geometry should not fade out.
-          scene.fog = new THREE.Fog(SKY_HORIZON, span * 2, span * 8);
-          resolve({ triangles: Math.round(triangles) });
+
+          // The baked lighting is awaited, and that is the whole point. Adding a light
+          // map to a material changes which shader it needs, so attaching it to a map
+          // already on screen makes three.js rebuild every one of them in a single
+          // frame — 80 programs on kz_dojo — and the replay visibly stops dead a couple
+          // of seconds in, exactly when the image finishes downloading. Finish the
+          // materials first, then show the map.
+          loadBakedLight(url)
+            .then(() =>
+              // And compile them before the first frame that needs them, rather than
+              // when the camera turns and a wall is drawn for the first time. That
+              // stall is not new — it is every map's first draw — but real textures
+              // made it long enough to feel like a freeze.
+              renderer.compileAsync
+                ? renderer.compileAsync(gltf.scene, camera, scene)
+                : null,
+            )
+            .catch(() => {})
+            .then(() => {
+              mapGroup.add(gltf.scene);
+              mapGroup.visible = true;
+              grid.visible = false;
+              // With walls to hide behind, near geometry should not fade out.
+              scene.fog = new THREE.Fog(SKY_HORIZON, span * 2, span * 8);
+              resolve({ triangles: Math.round(triangles) });
+            });
         },
         undefined,
         reject,

@@ -178,6 +178,7 @@ export const trimMap = async ({
   // their name. Counted separately because they are two different failures: a shader
   // glTF has no room for, like water, and a surface whose material the workshop item
   // does not carry at all.
+  let morphTargetsRemoved = 0;
   let untexturedMaterials = 0;
   let untexturedSurfaces = 0;
 
@@ -242,6 +243,7 @@ export const trimMap = async ({
   };
 
   for (const mesh of root.listMeshes()) {
+    mesh.setWeights([]);
     const meshTriangles = mesh
       .listPrimitives()
       .reduce((total, primitive) => total + countTriangles(primitive), 0);
@@ -274,6 +276,17 @@ export const trimMap = async ({
         if (keepAttributes.has(semantic)) continue;
         attributesDropped.add(semantic);
         primitive.setAttribute(semantic, null);
+      }
+
+      // Morph targets: vertex deltas for deforming a model, which nothing here animates.
+      // kz_dojo has a koi fish carrying 150 of them and no weights to blend them with,
+      // and that combination is not merely wasted download — three.js takes the morph
+      // path for any geometry that has targets, then reads the influences array the
+      // loader never made, and throws out of the render loop. The replay stops dead the
+      // moment the camera turns towards the pond.
+      for (const target of primitive.listTargets()) {
+        primitive.removeTarget(target);
+        morphTargetsRemoved += 1;
       }
       if (lit && !withTextures) {
         // Now that it is the only set left, it has to be set zero: glTF numbers
@@ -367,5 +380,6 @@ export const trimMap = async ({
       : null,
     untexturedMaterials,
     untexturedSurfaces,
+    morphTargetsRemoved,
   };
 };
