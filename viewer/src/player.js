@@ -959,8 +959,9 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
     // Held at the finish rather than hidden, so you can see the gap open up.
     marker.material.opacity = playbackTime > durationOf(track) ? 0.35 : 1;
     marker.material.transparent = true;
-    marker.visible = showGuides();
-    routeOutline.visible = showGuides();
+    const guides = showGuides();
+    marker.visible = guides;
+    routeOutline.visible = guides;
 
     let rivalIndex = null;
     if (rival) {

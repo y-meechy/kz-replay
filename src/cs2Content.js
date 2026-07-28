@@ -80,8 +80,6 @@ export const cs2ArchivePath = (partOrName) =>
       : partOrName
   }`;
 
-const partFile = cs2ArchivePath;
-
 /**
  * The archives the cache actually holds, the index among them.
  *
@@ -287,7 +285,7 @@ export const ensureCs2Assets = async ({
     let bytes = 0;
     const fetched = [];
     for (const part of parts) {
-      const name = partFile(part);
+      const name = cs2ArchivePath(part);
       const entry = files.get(name);
       if (!entry) {
         // In the index but not in the manifest: the two came from different CS2
@@ -318,7 +316,7 @@ export const ensureCs2Assets = async ({
   }
 
   const absent = parts.filter(
-    (part) => !existsSync(join(cs2Dir, partFile(part))),
+    (part) => !existsSync(join(cs2Dir, cs2ArchivePath(part))),
   );
   if (absent.length) {
     log(
@@ -328,7 +326,7 @@ export const ensureCs2Assets = async ({
     await fetchFiles({
       cs2Dir,
       toolsDir,
-      files: absent.map(partFile),
+      files: absent.map(cs2ArchivePath),
       log,
     });
   }
