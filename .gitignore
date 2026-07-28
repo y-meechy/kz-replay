@@ -9,6 +9,7 @@ viewer/public/tracks/*.json
 .playwright-mcp/
 .DS_Store
 viewer/public/maps/*.glb
+viewer/public/maps/*.webp
 tools/
 viewer/dist/
 

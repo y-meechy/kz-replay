@@ -227,14 +227,26 @@ const commands = {
       toolsDir: join(ROOT, "tools"),
       outputDir: join(ROOT, "viewer", "public", "maps"),
       steamcmd: flags.steamcmd ?? "steamcmd",
-      // Experiment: --textures keeps the map's own materials, and writes to
-      // <map>.textured.glb so the geometry build is left alone.
-      withTextures: Boolean(flags.textures),
+      // The mapper's own materials and textures, which the workshop item carries.
+      // On by default; --no-textures falls back to the map's baked lighting over
+      // colours guessed from material names.
+      withTextures: !flags["no-textures"],
       // --colors gives every surface a flat colour picked from the material name
       // the mapper used. No textures are involved, and none are needed.
       withColours: Boolean(flags.colors ?? flags.colours),
+      // The map's own baked sun and shadows, multiplied into those colours. On by
+      // default because it is what makes a converted map look like the map;
+      // --no-lightmap goes back to flat colours.
+      withLightmap: !flags["no-lightmap"],
+      // The map's real sky. Needs tools/DepotDownloader and borrows one CS2 archive
+      // part per distinct sky; --no-sky keeps the viewer's own gradient.
+      withSky: !flags["no-sky"],
+      ...(flags["sky-size"] ? { skySize: Number(flags["sky-size"]) } : {}),
       ...(flags["texture-size"]
         ? { textureSize: Number(flags["texture-size"]) }
+        : {}),
+      ...(flags["lightmap-size"]
+        ? { lightmapSize: Number(flags["lightmap-size"]) }
         : {}),
       log: (message) => console.log(`  ${message}`),
     });

@@ -22,13 +22,23 @@ import {
   rm,
   readdir,
   stat,
+  writeFile,
 } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import sharp from "sharp";
 import { trimMap } from "./trimMap.js";
+import { buildLightmap } from "./mapLightmap.js";
 import { readMaterialNames } from "./mapMaterialNames.js";
+import { buildSky, readSkyName } from "./mapSky.js";
+import {
+  cs2GameInfoPath,
+  ensureCs2Assets,
+  syncCs2Index,
+} from "./cs2Content.js";
+import { CS2_DIR } from "./config.js";
 
 const run = promisify(execFile);
 
@@ -44,6 +54,30 @@ const GLTF_TRANSFORM = join(
 // The exporter and the compressor both print a lot; the default 1 MB pipe buffer
 // overflows and the step fails with a maxBuffer error instead of a real one.
 const BIG_OUTPUT = { maxBuffer: 64 * 1024 * 1024 };
+
+/**
+ * What the compressor should do with the images in the file, if it has any.
+ *
+ * WebP over KTX2: every browser decodes it natively, where KTX2 needs a transcoder
+ * shipped alongside the viewer. VRAM suffers, download does not.
+ */
+const textureCompressArgs = ({ withTextures, bakeLighting, textureSize }) => {
+  if (withTextures) {
+    return [
+      "--texture-compress",
+      "webp",
+      "--texture-size",
+      String(textureSize),
+    ];
+  }
+  if (bakeLighting) {
+    // The atlas was resized on the way in, so only the encoding is left to do. WebP
+    // takes the baked lighting from 1.4 MB of PNG to about 150 KB.
+    return ["--texture-compress", "webp"];
+  }
+  // A colour-only or grey map carries no image at all.
+  return ["--texture-compress", "false"];
+};
 
 export const validateGlb = async (path) => {
   const handle = await open(path, "r");
@@ -103,6 +137,7 @@ const cleanupConversionArtifacts = async ({
   await Promise.all([
     rm(join(workDir, "export", mapName), { recursive: true, force: true }),
     rm(join(workDir, "maps", `${mapName}.vpk`), { force: true }),
+    rm(join(workDir, "content", mapName), { recursive: true, force: true }),
     rm(workshopContentDir(steamRoot, workshopId), {
       recursive: true,
       force: true,
@@ -131,30 +166,53 @@ export const convertMap = async ({
   // Leaves and branches are millions of triangles a player runs straight through.
   // Turn this off if a map uses plants as climbable props.
   dropFoliage = true,
-  // Export the map's own materials and textures instead of shapes only. An
-  // experiment: it multiplies both the download and the conversion time, so the
-  // default stays geometry.
-  withTextures = false,
+  // Export the map's own materials and textures, which the workshop item carries and
+  // which are the closest thing to what a player actually sees. On by default; it
+  // roughly doubles the conversion time, because every material and image has to be
+  // decoded, and adds two vertex streams.
+  withTextures = true,
   // Colour every surface from the material name the world was built with. The
   // names survive without the game files; the textures do not. See mapColours.js.
   withColours = false,
-  // Only read when withTextures is on. 1024 is a compromise: a wall fills a lot of
-  // screen on a phone, but the whole point is to keep the file downloadable.
-  textureSize = 1024,
+  // Multiply those colours by the map's own baked lighting, which the map does ship.
+  // Real sun, real shadows, real corner darkening, one small texture for the whole
+  // level. Implies withColours: the light is multiplied into the flat colour.
+  // See mapLightmap.js.
+  withLightmap = false,
+  // Side of the baked lighting atlas. One image covers a whole map, so this is the
+  // only thing between a 4096² source and a browser download: 4096 is 24 MB, 1024 is
+  // about 150 KB, 512 about 70 KB and starts to bleed light across the seams
+  // between one surface's patch of the atlas and the next.
+  lightmapSize = 1024,
+  // Write the map's real sky beside the .glb, as `<map>.sky.webp`. The map names it and
+  // CS2 holds it, so this is the one step that needs anything from the game — one
+  // archive part per distinct sky, cached under CS2_DIR. See mapSky.js.
+  withSky = false,
+  // Width of that image; the height is half, because it is equirectangular. 1024 is
+  // about 5 KB: a sky is smooth, so there is nothing for WebP to spend bytes on.
+  skySize = 1024,
+  // Where the borrowed CS2 assets are cached. Only read when withSky is on.
+  cs2Dir = CS2_DIR,
+  // Only read when withTextures is on. Textures tile, so this is detail per repeat
+  // rather than per map, and it is nearly free: on kz_victoria 128 is 2.8 MB, 256 is
+  // 3.0 MB and 512 is 4.2 MB, because the cost is the vertex streams a texture needs
+  // and not the images. 256 is where the mortar lines in a brick wall start reading;
+  // 512 is the first step that costs real megabytes on a big map.
+  textureSize = 256,
   // Delete the workshop download and the intermediate exports afterwards. One map
   // can be half a gigabyte of vpk plus a 250 MB raw glb, so converting all 85 of
   // them without this needs tens of gigabytes that are never read again.
   cleanup = true,
   log = () => {},
 }) => {
-  // A textured build is written alongside the geometry one rather than over it, so
-  // the two can be compared and the experiment can be thrown away by deleting files.
-  const outputBase = withTextures ? `${mapName}.textured` : mapName;
-
+  // Every build writes `<map>.glb`, whatever it was built with. A textured build used
+  // to go to `<map>.textured.glb` so the experiment could be thrown away by deleting
+  // files, but the viewer only ever looks for `<map>.glb`, so the flag produced a file
+  // nothing could load.
   let temporaryOutput = null;
   try {
     await mkdir(outputDir, { recursive: true });
-    await cleanupTemporaryGlb(outputDir, outputBase);
+    await cleanupTemporaryGlb(outputDir, mapName);
 
     const cli = requireTool(
       join(toolsDir, "Source2Viewer-CLI"),
@@ -197,24 +255,64 @@ export const convertMap = async ({
       );
     }
 
-    const outerVpk = (await readdir(itemDir)).find((file) =>
-      file.endsWith("_dir.vpk"),
+    // A workshop item is either one .vpk or a split archive, and a split one has to be
+    // opened through its `_dir.vpk` index rather than through any of the parts. So the
+    // index wins where there is one, and a lone .vpk is just as valid: kz_phamous
+    // ships as `3104579274.vpk` and nothing else, and looking only for `_dir.vpk` is
+    // why that map could never be converted.
+    const vpks = (await readdir(itemDir)).filter((file) =>
+      file.endsWith(".vpk"),
     );
+    const outerVpk =
+      vpks.find((file) => file.endsWith("_dir.vpk")) ??
+      (vpks.length === 1 ? vpks[0] : null);
     if (!outerVpk) {
-      throw new Error(`no *_dir.vpk in ${itemDir}`);
+      throw new Error(
+        vpks.length
+          ? `${vpks.length} vpk parts in ${itemDir} but no _dir.vpk to open them with`
+          : `no .vpk in ${itemDir}`,
+      );
     }
 
     // 3a. The playable map is a VPK nested inside the workshop VPK.
-    log("extracting the inner map vpk…");
-    await run(cli, [
-      "-i",
-      join(itemDir, outerVpk),
-      "-o",
-      workDir,
-      "-f",
-      `maps/${mapName}.vpk`,
-    ]);
-    const innerVpk = join(workDir, "maps", `${mapName}.vpk`);
+    //
+    // For a shapes-only build that one file is all we want. For a textured one it is
+    // not enough: the mapper's own materials and models sit beside it in the workshop
+    // item, and the exporter only finds them if the map is opened from inside a tree
+    // that looks like a game — `game/csgo/maps/<map>.vpk` with `materials/` and
+    // `models/` as siblings, and `gameinfo.gi` at the top of it.
+    //
+    // gameinfo.gi is what makes ValveResourceFormat believe it has found a game and
+    // start resolving paths at all. Without it the export comes back with zero
+    // materials and zero textures, which is exactly how this looked when the
+    // conclusion was "the textures are not in the workshop item". They are; the
+    // exporter just could not see them.
+    const contentRoot = join(workDir, "content", mapName);
+    const gameDir = join(contentRoot, "game", "csgo");
+    let innerVpk;
+    if (withTextures) {
+      log("extracting the workshop item's maps, materials and models…");
+      await rm(contentRoot, { recursive: true, force: true });
+      await run(
+        cli,
+        ["-i", join(itemDir, outerVpk), "-o", gameDir],
+        BIG_OUTPUT,
+      );
+      await syncCs2Index({ cs2Dir, toolsDir, log });
+      await copyFile(cs2GameInfoPath(cs2Dir), join(gameDir, "gameinfo.gi"));
+      innerVpk = join(gameDir, "maps", `${mapName}.vpk`);
+    } else {
+      log("extracting the inner map vpk…");
+      await run(cli, [
+        "-i",
+        join(itemDir, outerVpk),
+        "-o",
+        workDir,
+        "-f",
+        `maps/${mapName}.vpk`,
+      ]);
+      innerVpk = join(workDir, "maps", `${mapName}.vpk`);
+    }
     if (!existsSync(innerVpk)) {
       throw new Error(
         `expected maps/${mapName}.vpk inside the workshop item. The map may be published under a different internal name.`,
@@ -254,12 +352,58 @@ export const convertMap = async ({
       throw new Error(`the exporter produced no world.glb for ${mapName}`);
     }
 
+    // 3c. The map's real sky, written beside the .glb rather than into it: glTF has no
+    // slot for a scene background, and the viewer wants it as an equirectangular image
+    // either way. Costs a few kilobytes, and one CS2 archive part the first time a
+    // given sky is seen.
+    let sky = null;
+    if (withSky) {
+      const skyName = await readSkyName({
+        cli,
+        mapVpk: innerVpk,
+        mapName,
+        workDir,
+        log,
+      });
+      if (!skyName) {
+        log("the map names no sky, so the viewer keeps its gradient");
+      } else {
+        const { missing } = await ensureCs2Assets({
+          cs2Dir,
+          toolsDir,
+          cli,
+          paths: [skyName],
+          log,
+        });
+        if (missing.length) {
+          log(`CS2 has no ${skyName}, so the viewer keeps its gradient`);
+        } else {
+          sky = await buildSky({
+            cli,
+            cs2Dir,
+            skyName,
+            workDir,
+            size: skySize,
+            log,
+          });
+        }
+      }
+    }
+
     // 4. Throw away what the viewer cannot show: unused vertex attributes, and
     // foliage. This is where nearly all of the size goes — on kz_moss it is 251 MB
     // down to 3 MB, because 95% of the triangles in that map are leaves — and unlike
     // simplification it does not move a single vertex.
+    // Textures and baked lighting are a pair, not alternatives: the mapper's own
+    // surfaces, lit by the mapper's own sun. They address different things — one UV set
+    // repeats a brick texture across a wall, the other finds that wall's patch of the
+    // lighting atlas — so the trim pass keeps both, and the atlas ships as its own file
+    // rather than inside the .glb, because glTF has no light map slot and the base
+    // colour slot is taken by the mapper's texture.
+    const bakeLighting = withLightmap;
+
     let materialNames = null;
-    if (withColours) {
+    if (withColours || bakeLighting) {
       log("reading material names from the world nodes…");
       materialNames = await readMaterialNames({
         cli,
@@ -271,6 +415,19 @@ export const convertMap = async ({
       log(`the world names a material for ${materialNames.size} meshes`);
     }
 
+    let lightmap = null;
+    if (bakeLighting) {
+      log("baking out the map's own lighting…");
+      lightmap = await buildLightmap({
+        cli,
+        mapVpk: innerVpk,
+        mapName,
+        workDir,
+        size: lightmapSize,
+        log,
+      });
+    }
+
     log("trimming attributes and foliage…");
     const trimmed = join(exportDir, "world.trimmed.glb");
     const trim = await trimMap({
@@ -279,11 +436,23 @@ export const convertMap = async ({
       dropFoliage,
       withTextures,
       materialNames,
+      lightmap,
     });
     log(
       `dropped ${trim.meshesRemoved} foliage meshes (${((trim.trianglesRemoved / Math.max(trim.trianglesBefore, 1)) * 100).toFixed(0)}% of triangles) ` +
         `and ${trim.attributesDropped.length} unused attribute streams`,
     );
+    if (trim.untexturedMaterials || trim.untexturedSurfaces) {
+      log(
+        `${trim.untexturedSurfaces} surface(s) and ${trim.untexturedMaterials} material(s) ` +
+          `had nothing to draw and fell back to a colour from their name`,
+      );
+    }
+    if (trim.lightmap) {
+      log(
+        `baked lighting reaches ${trim.lightmap.lit} of ${trim.lightmap.lit + trim.lightmap.unlit} surfaces`,
+      );
+    }
     if (trim.colours) {
       const { palette, surfaces, named, matched } = trim.colours;
       log(
@@ -308,6 +477,12 @@ export const convertMap = async ({
       { label: "harder simplification", simplifyError: 0.004 },
     ];
 
+    const textures = textureCompressArgs({
+      withTextures,
+      bakeLighting,
+      textureSize,
+    });
+
     let best = null;
     for (const [index, attempt] of attempts.entries()) {
       const candidate = join(exportDir, `world.opt${index}.glb`);
@@ -319,19 +494,11 @@ export const convertMap = async ({
           candidate,
           "--compress",
           "meshopt",
-          // WebP over KTX2: every browser decodes it natively, where KTX2 needs a
-          // transcoder shipped alongside the viewer. VRAM suffers, download does not.
-          ...(withTextures
-            ? [
-                "--texture-compress",
-                "webp",
-                "--texture-size",
-                String(textureSize),
-              ]
-            : ["--texture-compress", "false"]),
+          ...textures,
           // Flat colours are already the cheapest thing a material can be. Baking
-          // them into a palette texture would add an image to a file that has none.
-          ...(withColours ? ["--palette", "false"] : []),
+          // them into a palette texture would add an image to a file that has one
+          // already, and on a lightmapped map it would overwrite the lighting.
+          ...(withColours || withLightmap ? ["--palette", "false"] : []),
           // Do not weld the map into one shape. Joining every mesh that shares a
           // material sounds like a saving and is the opposite: the result is a
           // handful of shapes that each span the whole map, so nothing is ever off
@@ -367,12 +534,37 @@ export const convertMap = async ({
       );
     }
 
-    const final = join(outputDir, `${outputBase}.glb`);
-    temporaryOutput = temporaryGlbPath(outputDir, outputBase);
+    const final = join(outputDir, `${mapName}.glb`);
+    temporaryOutput = temporaryGlbPath(outputDir, mapName);
     await copyFile(best?.path ?? raw, temporaryOutput);
     await validateGlb(temporaryOutput);
     await rename(temporaryOutput, final);
     temporaryOutput = null;
+
+    // After the .glb, so a half-written conversion never leaves a sky with no map to
+    // put it behind. The viewer treats a missing one as "no sky for this map".
+    // The baked lighting, when the .glb could not carry it. Same reasoning as the sky:
+    // a sibling file, and the viewer treating a missing one as "not lit".
+    const lightPath = join(outputDir, `${mapName}.light.webp`);
+    if (lightmap && withTextures) {
+      await writeFile(
+        lightPath,
+        await sharp(lightmap.png).webp({ quality: 85 }).toBuffer(),
+      );
+    } else if (bakeLighting) {
+      await rm(lightPath, { force: true });
+    }
+
+    const skyPath = join(outputDir, `${mapName}.sky.webp`);
+    if (sky) {
+      await writeFile(skyPath, sky.webp);
+    } else if (withSky) {
+      // A reconversion that looked for a sky and stopped finding one must not leave the
+      // old one behind. Guarded on withSky, though: without that, a `--no-sky` build or
+      // any caller that simply does not ask for a sky deletes the one already there,
+      // and every nightly refresh would quietly strip the skies off every map.
+      await rm(skyPath, { force: true });
+    }
 
     if (cleanup) {
       // Both are reproducible from the workshop id, and both are enormous. The final
@@ -384,6 +576,9 @@ export const convertMap = async ({
 
     return {
       path: final,
+      lightPath: lightmap && withTextures ? lightPath : null,
+      skyPath: sky ? skyPath : null,
+      sun: sky?.sun ?? null,
       rawPath: cleanup ? null : raw,
       simplifyError: best?.simplifyError ?? null,
     };
