@@ -19,6 +19,11 @@ seed_directory /opt/kz-seed/maps "$KZ_MAPS_DIR"
 # the bundled files must never overwrite what visitors wrote.
 mkdir -p "${KZ_STATE_DIR:-/data/state}"
 
+# Base game assets borrowed out of CS2 for the maps' real skies. Nothing to seed: the
+# conversion fetches what it needs and caches it here, and a part is ~105 MB, so it must
+# survive a deploy rather than be rebuilt into every image.
+mkdir -p "${KZ_CS2_DIR:-/data/cs2}"
+
 # The bind mount is created as root on a new host. The server and its nightly
 # refresh run as the unprivileged node user after ownership has been corrected.
 chown -R node:node /data /opt/kz-tools /opt/steamcmd

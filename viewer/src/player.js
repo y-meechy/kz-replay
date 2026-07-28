@@ -47,6 +47,39 @@ const SKY_ZENITH = "#1d3a5f";
 const SKY_HORIZON = "#5d7898";
 
 /**
+ * How strongly a map's own baked lighting counts, against the scene's own lights.
+ *
+ * Used as lightMapIntensity, so it is a straight multiplier on the light the mapper
+ * baked in before it is added to the three lights above. High enough that the real
+ * sun and the real shadows are what you notice; low enough that the scene's lights
+ * still carry the shape of anything the mapper left dark.
+ *
+ * Measured rather than eyeballed, against the numbers the scene lights alone were
+ * tuned to. See sampleBrightness().
+ */
+const BAKED_LIGHT_GAIN = 2.2;
+
+/**
+ * How much of the scene's own lighting is left on for a map that brought its own.
+ *
+ * Not zero: with the invented lights off entirely, anywhere the mapper baked no light
+ * goes to pure black, and a black silhouette says nothing about the shape of a wall
+ * you are about to jump off. Half of kz_grotto's garden is that dark. Low, though —
+ * the point of the baked light is the shadows, and a strong second light source
+ * fills them straight back in.
+ */
+const SCENE_LIGHT_SHARE = 0.4;
+
+/**
+ * The name of an imported material that carries baked lighting, not a surface colour.
+ *
+ * src/trimMap.js names them: one per palette colour, `kz_<lowercase hex>_lit`. A map
+ * converted with its real textures instead brings the mapper's own material names
+ * through unchanged, and none of those can match this.
+ */
+const BAKED_LIGHT_MATERIAL_NAME = /^kz_[0-9a-f]{6}_lit$/;
+
+/**
  * A vertical gradient, used as the scene background.
  *
  * Four pixels wide because a one pixel texture picks up filtering artefacts at the
@@ -393,7 +426,8 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
   // These intensities were tuned against sampleBrightness(), not by eye: they put
   // the mean picture luminance around 0.16 in the overview and 0.30 indoors, with
   // effectively no pixels clipped to white.
-  scene.add(new THREE.HemisphereLight("#7ea8d4", "#080d16", 1.9));
+  const sky = new THREE.HemisphereLight("#7ea8d4", "#080d16", 1.9);
+  scene.add(sky);
   const sun = new THREE.DirectionalLight("#e8f1ff", 2.3);
   sun.position.set(0.45, 1, 0.3);
   scene.add(sun);
@@ -407,6 +441,25 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
   const headlight = new THREE.DirectionalLight("#cfe3ff", 1.25);
   headlight.position.set(0, 0.35, 1); // camera space: shines forwards
   headlight.visible = false;
+
+  // A map that brought its own baked lighting does not need four invented lights at
+  // full strength as well: at full strength they flood the baked shadows and the map
+  // ends up as evenly lit as it was before any of this. Turned down, they only lift
+  // the corners the mapper left black, so the shape still reads there, and the map's
+  // own sun does the rest.
+  //
+  // Guarded rather than trusted to be called once. It is a multiply, so a second call
+  // would take the scene lights to 0.16 of full and quietly darken the whole level —
+  // and loadMap() is reachable twice on one player, when a map is converted from the
+  // page and then loaded into the player that had already reported it missing.
+  let sceneLightsDimmed = false;
+  const dimSceneLightsForBakedMap = () => {
+    if (sceneLightsDimmed) return;
+    sceneLightsDimmed = true;
+    for (const light of [sky, sun, rim, headlight]) {
+      light.intensity *= SCENE_LIGHT_SHARE;
+    }
+  };
 
   // Flat, unpainted concrete. The map is scenery: it has to read as shape without
   // competing with the speed colours of the run.
@@ -427,15 +480,46 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
   // flat shaded so the geometry reads without normals, front faces only so the
   // camera can see into the level, and fully rough so nothing turns into a mirror.
   // Only the colour is the map's own.
+  //
+  // A material named `kz_…_lit` carries the map's own baked lighting: the sun, the
+  // shadows and the darkening in every corner, as the mapper compiled them (see
+  // src/mapLightmap.js). It arrives as the base colour texture, because that is the
+  // only slot glTF has, and is moved to the light map slot here so it adds to the
+  // scene's lights instead of replacing the surface colour.
+  //
+  // The name is the only way to tell the two apart, and it has to be told apart: a map
+  // converted with its real surface textures also arrives with a base colour texture,
+  // and that one is the wall's own colour, which belongs exactly where it is. Treating
+  // it as a light map would multiply the level by a picture of brickwork.
+  //
+  // Adding rather than replacing, deliberately. Drawn unlit — colour times baked
+  // light and nothing else — a sunlit map looks better than this does, but anywhere
+  // the mapper baked no light the surface goes to pure black and the shape stops
+  // reading at all. kz_grotto's garden is half that. So the scene's lights stay on to
+  // carry the shape, and the baked light puts the map's real sun and shadow on top.
   const adoptedMaterials = new Map();
+  // Set the moment the first baked-light material is adopted, so the load below knows
+  // to turn the scene's own lights down without walking the materials again.
+  let adoptedBakedLight = false;
   const adoptMapMaterial = (material) => {
     let adopted = adoptedMaterials.get(material.uuid);
     if (!adopted) {
       adopted = material;
-      adopted.flatShading = true;
       adopted.side = THREE.FrontSide;
       adopted.roughness = 1;
       adopted.metalness = 0;
+      // A textured surface has real normals worth using; anything else has none and
+      // reads as shape only because flat shading derives one per triangle.
+      adopted.flatShading = !adopted.map;
+      if (adopted.map && BAKED_LIGHT_MATERIAL_NAME.test(adopted.name)) {
+        adopted.lightMap = adopted.map;
+        // The trim pass leaves the atlas UV as the only texture coordinate set, so
+        // it is set zero here, where three.js would default a light map to set one.
+        adopted.lightMap.channel = 0;
+        adopted.lightMapIntensity = BAKED_LIGHT_GAIN;
+        adopted.map = null;
+        adoptedBakedLight = true;
+      }
       // A map can finish loading long after the camera settled on the orbit view,
       // which is where ghosting is on, so match whatever is already in force.
       adopted.transparent = ghosted === true;
@@ -445,6 +529,72 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
       adoptedMaterials.set(material.uuid, adopted);
     }
     return adopted;
+  };
+
+  /**
+   * Swap the invented gradient for the map's real sky, when there is one.
+   *
+   * Written beside the .glb as `<map>.sky.webp` by src/mapSky.js, because glTF has no
+   * slot for a scene background. Equirectangular, which is what the gradient already
+   * pretends to be, so nothing but the image changes.
+   *
+   * Silent on failure on purpose. A map converted before this existed has no sky file,
+   * a 404 is the normal answer, and the gradient it falls back to is a perfectly good
+   * sky. The dev server answers unknown paths with index.html, so the loader is also
+   * the thing that rejects an HTML "hit".
+   */
+  const loadSky = (mapUrl) => {
+    const url = mapUrl.replace(/\.glb(\?.*)?$/, ".sky.webp");
+    if (url === mapUrl) return;
+    new THREE.TextureLoader().load(
+      url,
+      (texture) => {
+        texture.mapping = THREE.EquirectangularReflectionMapping;
+        texture.colorSpace = THREE.SRGBColorSpace;
+        scene.background?.dispose?.();
+        scene.background = texture;
+      },
+      undefined,
+      () => {},
+    );
+  };
+
+  /**
+   * Attach the map's baked lighting to its textured surfaces.
+   *
+   * A map converted with its real textures cannot carry the lighting atlas inside the
+   * .glb: glTF has no light map slot, and the one slot that would do — base colour — is
+   * where the mapper's own texture goes. So the atlas is written beside the map as
+   * `<map>.light.webp` and paired up here, against the second UV set the trim pass kept
+   * for exactly this.
+   *
+   * Silent on failure, like the sky: a map converted with no lighting, or with the
+   * lighting embedded because it had no textures, simply has no file to fetch.
+   */
+  const loadBakedLight = (mapUrl) => {
+    const url = mapUrl.replace(/\.glb(\?.*)?$/, ".light.webp");
+    if (url === mapUrl) return;
+    new THREE.TextureLoader().load(
+      url,
+      (texture) => {
+        texture.colorSpace = THREE.SRGBColorSpace;
+        // three.js calls the second UV set `uv1`, which is where a light map looks by
+        // default — but only if it is told, because the default channel is 1 and the
+        // lightmapped-only build puts the atlas on set 0.
+        texture.channel = 1;
+        let attached = 0;
+        for (const material of adoptedMaterials.values()) {
+          if (!material.map || material.lightMap) continue;
+          material.lightMap = texture;
+          material.lightMapIntensity = BAKED_LIGHT_GAIN;
+          material.needsUpdate = true;
+          attached += 1;
+        }
+        if (attached) dimSceneLightsForBakedMap();
+      },
+      undefined,
+      () => {},
+    );
   };
 
   const loadMap = (url) =>
@@ -481,6 +631,14 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
           for (const light of importedLights) {
             light.removeFromParent();
           }
+          if (adoptedBakedLight) {
+            dimSceneLightsForBakedMap();
+          }
+          // The map's own sky and its own baked lighting, if the conversion found
+          // them. Kicked off here rather than awaited: both are small, and a map
+          // should not wait behind either.
+          loadSky(url);
+          loadBakedLight(url);
           mapGroup.add(gltf.scene);
           mapGroup.visible = true;
           grid.visible = false;

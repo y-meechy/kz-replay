@@ -14,14 +14,33 @@
 //
 // Neither pass touches vertex positions, so the geometry a run is measured against
 // stays exactly where it was. That matters: mesh simplification does move it.
+//
+// The one attribute worth keeping besides POSITION is the lightmap UV, when the map's
+// own baked lighting is being shipped with it. See mapLightmap.js.
 
-import { NodeIO } from "@gltf-transform/core";
+import { NodeIO, TextureInfo } from "@gltf-transform/core";
 import { dedup, prune } from "@gltf-transform/functions";
 import { colourFor, isInvisibleMaterial } from "./mapColours.js";
 import { normaliseMeshName } from "./mapMaterialNames.js";
 
 /** The only attribute the flat-shaded viewer material reads. */
 const KEEP_ATTRIBUTES = new Set(["POSITION"]);
+
+/**
+ * The set the exporter puts the lightmap atlas UV in: the address of this vertex
+ * inside the map's baked lighting (see mapLightmap.js). Renamed to TEXCOORD_0 below,
+ * because glTF requires texture coordinate sets to be numbered from zero with no
+ * gaps and it is the only set left by then.
+ */
+const LIGHTMAP_UV = "TEXCOORD_1";
+
+/**
+ * What a lightmapped map needs instead.
+ *
+ * NORMAL is not in here. Baked light is the whole of the lighting, so the viewer
+ * draws these surfaces unlit and never reads a normal.
+ */
+const KEEP_ATTRIBUTES_LIGHTMAP = new Set(["POSITION", LIGHTMAP_UV]);
 
 /**
  * What a textured map needs instead.
@@ -31,6 +50,33 @@ const KEEP_ATTRIBUTES = new Set(["POSITION"]);
  * a normal map is present, so carrying a fourth stream per vertex buys nothing.
  */
 const KEEP_ATTRIBUTES_TEXTURED = new Set(["POSITION", "NORMAL", "TEXCOORD_0"]);
+
+/**
+ * Both at once, which is as close to the real map as this gets: the mapper's own
+ * surfaces, lit by the mapper's own sun.
+ *
+ * Four streams, and worth it. The two UV sets address different things — TEXCOORD_0
+ * repeats a brick texture across a wall, TEXCOORD_1 finds that wall's one patch of the
+ * baked lighting atlas — so neither can stand in for the other.
+ *
+ * The atlas UV keeps its own number here rather than being moved to zero, because
+ * TEXCOORD_0 is in use. glTF is fine with that; three.js calls it `uv1` and that is
+ * where a light map looks by default.
+ */
+const KEEP_ATTRIBUTES_TEXTURED_LIT = new Set([
+  "POSITION",
+  "NORMAL",
+  "TEXCOORD_0",
+  LIGHTMAP_UV,
+]);
+
+/** Which of the four sets above applies, given what this map is being shipped with. */
+const keepAttributesFor = ({ withTextures, withLightmap }) => {
+  if (withTextures && withLightmap) return KEEP_ATTRIBUTES_TEXTURED_LIT;
+  if (withLightmap) return KEEP_ATTRIBUTES_LIGHTMAP;
+  if (withTextures) return KEEP_ATTRIBUTES_TEXTURED;
+  return KEEP_ATTRIBUTES;
+};
 
 // Plant words as they appear in exported mesh names, which are built from the model
 // and material names the mapper used.
@@ -102,10 +148,16 @@ export const trimMap = async ({
   // gets a flat colour picked from that name. Costs about thirty material
   // definitions and not one byte of texture.
   materialNames = null,
+  // { png, size } from buildLightmap(): the map's own baked lighting as one image.
+  // Given one, every surface that carries a lightmap UV is multiplied by it, so the
+  // flat colour picks up the map's real sun, shadows and corner darkening. Requires
+  // materialNames, because the flat colour is what the light is multiplied into.
+  lightmap = null,
 }) => {
-  const keepAttributes = withTextures
-    ? KEEP_ATTRIBUTES_TEXTURED
-    : KEEP_ATTRIBUTES;
+  const keepAttributes = keepAttributesFor({
+    withTextures,
+    withLightmap: Boolean(lightmap),
+  });
   const io = new NodeIO();
   const document = await io.read(input);
   const root = document.getRoot();
@@ -119,24 +171,62 @@ export const trimMap = async ({
   let colouredTotal = 0;
   let colouredNamed = 0;
   let colouredMatched = 0;
+  // How much of the map the baked lighting actually reaches.
+  let litSurfaces = 0;
+  let unlitSurfaces = 0;
+  // Surfaces a textured export could not texture, which fall back to a colour from
+  // their name. Counted separately because they are two different failures: a shader
+  // glTF has no room for, like water, and a surface whose material the workshop item
+  // does not carry at all.
+  let untexturedMaterials = 0;
+  let untexturedSurfaces = 0;
 
   // Taken before any colour material is made, so the clean-up below throws away
   // what the exporter brought and never what we just added.
   const importedMaterials = root.listMaterials();
   const importedTextures = root.listTextures();
 
+  // The baked lighting, as one texture shared by every material in the map. Created
+  // lazily so a map whose meshes all turn out to be unlit ships no image at all.
+  // Only when there are no real textures. A textured map ships the atlas as its own
+  // file instead, because glTF has no light map slot and the base colour slot is taken
+  // by the mapper's own texture. See mapPipeline.js and the viewer's loadBakedLight().
+  let lightmapTexture = null;
+  const bakedLightTexture = () => {
+    if (!lightmapTexture) {
+      lightmapTexture = document
+        .createTexture("kz_baked_light")
+        .setImage(lightmap.png)
+        .setMimeType("image/png");
+    }
+    return lightmapTexture;
+  };
+
   // One material per colour rather than per mesh, so the compressor can still merge
-  // everything that ends up the same colour into a single draw call.
+  // everything that ends up the same colour into a single draw call. A lightmapped
+  // map has two per colour: the surfaces that carry an atlas UV, and the handful
+  // that do not and can only be flat.
   const paletteByHex = new Map();
-  const colourMaterial = ({ hex, linear }) => {
-    let material = paletteByHex.get(hex);
+  const colourMaterial = ({ hex, linear }, lit) => {
+    const key = lit ? `${hex}+lit` : hex;
+    let material = paletteByHex.get(key);
     if (!material) {
       material = document
-        .createMaterial(`kz_${hex.slice(1)}`)
+        .createMaterial(`kz_${hex.slice(1)}${lit ? "_lit" : ""}`)
         .setBaseColorFactor([...linear, 1])
         .setRoughnessFactor(1)
         .setMetallicFactor(0);
-      paletteByHex.set(hex, material);
+      if (lit) {
+        material.setBaseColorTexture(bakedLightTexture());
+        // Every atlas UV is inside the image by construction, and clamping means a
+        // sample that lands a hair outside one cannot wrap around and pick up the
+        // lighting of a surface on the far side of the map.
+        material
+          .getBaseColorTextureInfo()
+          .setWrapS(TextureInfo.WrapMode.CLAMP_TO_EDGE)
+          .setWrapT(TextureInfo.WrapMode.CLAMP_TO_EDGE);
+      }
+      paletteByHex.set(key, material);
     }
     return material;
   };
@@ -175,14 +265,52 @@ export const trimMap = async ({
     }
 
     for (const primitive of mesh.listPrimitives()) {
+      // Props are model instances rather than world geometry, and they were lit at
+      // runtime in the game, so they carry no atlas UV and cannot be lightmapped.
+      // There are five of them in kz_victoria, ten triangles in total.
+      const lit = Boolean(lightmap && primitive.getAttribute(LIGHTMAP_UV));
+
       for (const semantic of primitive.listSemantics()) {
         if (keepAttributes.has(semantic)) continue;
         attributesDropped.add(semantic);
         primitive.setAttribute(semantic, null);
       }
-      if (materialNames) {
+      if (lit && !withTextures) {
+        // Now that it is the only set left, it has to be set zero: glTF numbers
+        // texture coordinates from zero with no gaps. With textures it keeps its own
+        // number, because TEXCOORD_0 is the material's UV and is in use.
+        primitive.setAttribute(
+          "TEXCOORD_0",
+          primitive.getAttribute(LIGHTMAP_UV),
+        );
+        primitive.setAttribute(LIGHTMAP_UV, null);
+        litSurfaces += 1;
+      } else if (lit) {
+        litSurfaces += 1;
+      } else if (lightmap) {
+        // Nothing addresses the atlas, so drop the UV set with everything else.
+        primitive.setAttribute(LIGHTMAP_UV, null);
+        unlitSurfaces += 1;
+      }
+      if (withTextures) {
+        // The mapper's own material is the whole point of a textured build, so it is
+        // never replaced by a colour guessed from a filename. Only a surface with
+        // nothing at all to draw falls back.
+        if (!primitive.getMaterial()) {
+          // A textured export leaves some surfaces with no material at all — 52 of them
+          // on kz_victoria, 47k triangles — because the material they name is a base
+          // game asset that is not in the workshop item and so could not be loaded. glTF
+          // says a primitive with no material is plain white, and white is the brightest
+          // thing on screen: they read as holes cut in the level.
+          //
+          // The colour guessed from the surface's name is what an untextured map would
+          // have given it, so that is what they fall back to.
+          primitive.setMaterial(colourMaterial(colourFor(describedBy), false));
+          untexturedSurfaces += 1;
+        }
+      } else if (materialNames) {
         const colour = colourFor(describedBy);
-        primitive.setMaterial(colourMaterial(colour));
+        primitive.setMaterial(colourMaterial(colour, lit));
         colouredNamed += named ? 1 : 0;
         colouredMatched += colour.rule ? 1 : 0;
         colouredTotal += 1;
@@ -198,6 +326,23 @@ export const trimMap = async ({
     }
     for (const texture of importedTextures) {
       texture.dispose();
+    }
+  } else {
+    // Not every Source 2 shader is a PBR material, and the ones that are not export
+    // with no base colour texture and a white factor — so they render as pure white,
+    // which is the brightest thing on screen and reads as a hole in the level. On
+    // kz_victoria that is the water: `sky.vfx`, `water.vfx` and friends are their own
+    // shaders, and glTF has nowhere to put them.
+    //
+    // The colour guessed from the material's name is exactly what an untextured map
+    // would have used for that surface, so it is the right thing to fall back to. See
+    // mapColours.js — "water" is in the word list.
+    for (const material of importedMaterials) {
+      if (material.isDisposed() || material.getBaseColorTexture()) continue;
+      const { linear } = colourFor(material.getName() ?? "");
+      const [, , , alpha] = material.getBaseColorFactor();
+      material.setBaseColorFactor([...linear, alpha]);
+      untexturedMaterials += 1;
     }
   }
 
@@ -217,5 +362,10 @@ export const trimMap = async ({
           matched: colouredMatched,
         }
       : null,
+    lightmap: lightmap
+      ? { size: lightmap.size, lit: litSurfaces, unlit: unlitSurfaces }
+      : null,
+    untexturedMaterials,
+    untexturedSurfaces,
   };
 };

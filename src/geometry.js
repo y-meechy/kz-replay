@@ -125,9 +125,18 @@ export const convertPendingMaps = async ({
   budgetMs = 45 * 60 * 1000,
   force = false,
   only = null,
+  // The mapper's own textures, which is as close to the real map as this gets.
+  withTextures = true,
   // Colour is the default for anything converted from here on. It costs nothing in
-  // file size and a grey map next to a coloured one just looks broken.
+  // file size and a grey map next to a coloured one just looks broken. Still on with
+  // textures: it is what the surfaces a textured export cannot texture fall back to.
   withColours = true,
+  // And the map's own baked lighting on top of it, for about 150 KB.
+  withLightmap = true,
+  // And the map's real sky, for about 3 KB. Needs tools/DepotDownloader and borrows one
+  // CS2 archive part per distinct sky, so it is the one step that can be turned off for
+  // a machine that cannot reach Steam's content depot.
+  withSky = true,
   log = () => {},
 }) => {
   const manifest = await readManifest(manifestPath);
@@ -192,7 +201,10 @@ export const convertPendingMaps = async ({
         workshopId: map.workshopId,
         toolsDir,
         outputDir,
+        withTextures,
         withColours,
+        withLightmap,
+        withSky,
         log: (message) => log(`  ${map.name}: ${message}`),
       });
       const { size } = await stat(path);

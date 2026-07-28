@@ -56,6 +56,12 @@ export const convertMapPlugin = () => ({
           workshopId: String(map.workshop_id),
           toolsDir: join(ROOT, "tools"),
           outputDir: join(ROOT, "viewer", "public", "maps"),
+          // The same defaults the nightly job converts with, so a map converted from
+          // the page does not come out looking different from the rest.
+          withTextures: true,
+          withColours: true,
+          withLightmap: true,
+          withSky: true,
           log: (message) => {
             log.push(message);
             server.config.logger.info(`[convert-map] ${name}: ${message}`);

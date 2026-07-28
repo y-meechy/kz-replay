@@ -30,6 +30,14 @@ export const MAPS_DIR = fromEnv(
 export const TOOLS_DIR = fromEnv("KZ_TOOLS_DIR", join(REPO_ROOT, "tools"));
 
 /**
+ * Base game assets borrowed out of CS2, one archive part at a time.
+ *
+ * Not an install: an index plus whatever parts the converted maps turned out to need,
+ * which is how a map's real sky is reachable without 61 GB of game. See cs2Content.js.
+ */
+export const CS2_DIR = fromEnv("KZ_CS2_DIR", join(TOOLS_DIR, "cs2"));
+
+/**
  * State the running app writes itself, as opposed to the catalog, which the nightly
  * refresh regenerates from the API.
  *

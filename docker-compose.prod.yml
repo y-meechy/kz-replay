@@ -15,6 +15,10 @@ services:
       # cannot rebuild from the API.
       KZ_STATE_DIR: /data/state
       KZ_TOOLS_DIR: /opt/kz-tools
+      # Base game assets borrowed out of CS2, one archive part at a time. On the volume
+      # rather than in the image: a part is about 105 MB and re-downloading the set on
+      # every deploy would be pure waste.
+      KZ_CS2_DIR: /data/cs2
     volumes:
       - /var/lib/kz-replay:/data
     restart: unless-stopped

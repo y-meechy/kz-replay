@@ -14,6 +14,9 @@ RUN npm run build
 FROM --platform=linux/amd64 node:22-bookworm-slim AS runtime
 
 ARG VALVE_RESOURCE_FORMAT_VERSION=19.2
+# Borrows the map's sky out of the CS2 content depot, anonymously and one archive part
+# at a time, so the image never needs a copy of the game. See src/cs2Content.js.
+ARG DEPOT_DOWNLOADER_VERSION=3.4.0
 
 ENV NODE_ENV=production \
     PORT=8080 \
@@ -21,7 +24,8 @@ ENV NODE_ENV=production \
     KZ_DATA_DIR=/data/catalog \
     KZ_MAPS_DIR=/data/maps \
     KZ_STATE_DIR=/data/state \
-    KZ_TOOLS_DIR=/opt/kz-tools
+    KZ_TOOLS_DIR=/opt/kz-tools \
+    KZ_CS2_DIR=/data/cs2
 
 # Copying the build output before installing runtime tools makes BuildKit finish
 # the Vite stage first instead of running two memory-heavy stages concurrently.
@@ -37,6 +41,7 @@ RUN apt-get update \
         libicu72 \
         tzdata \
         unzip \
+        xz-utils \
     && rm -rf /var/lib/apt/lists/* \
     && ln -snf /usr/share/zoneinfo/Europe/Berlin /etc/localtime \
     && echo Europe/Berlin > /etc/timezone \
@@ -53,7 +58,12 @@ RUN apt-get update \
         --output /tmp/valve-resource-format.zip \
     && unzip -q /tmp/valve-resource-format.zip -d /opt/kz-tools \
     && chmod 0755 /opt/kz-tools/Source2Viewer-CLI \
-    && rm -f /tmp/steamcmd_linux.tar.gz /tmp/valve-resource-format.zip \
+    && curl --fail --location --retry 3 \
+        "https://github.com/SteamRE/DepotDownloader/releases/download/DepotDownloader_${DEPOT_DOWNLOADER_VERSION}/DepotDownloader-linux-x64.zip" \
+        --output /tmp/depotdownloader.zip \
+    && unzip -q /tmp/depotdownloader.zip -d /opt/kz-tools \
+    && chmod 0755 /opt/kz-tools/DepotDownloader \
+    && rm -f /tmp/steamcmd_linux.tar.gz /tmp/valve-resource-format.zip /tmp/depotdownloader.zip \
     && chown -R node:node /opt/steamcmd /opt/kz-tools
 
 COPY package.json package-lock.json ./
