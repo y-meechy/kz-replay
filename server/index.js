@@ -15,9 +15,18 @@
 
 import { createServer } from "node:http";
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep } from "node:path";
-import { DATA_DIR, MAPS_DIR, REPO_ROOT, STATE_DIR } from "../src/config.js";
+import {
+  DATA_DIR,
+  MAPS_DIR,
+  MAPS_JSON,
+  REPO_ROOT,
+  STATE_DIR,
+  WRS_JSON,
+} from "../src/config.js";
+import { buildLatestWorldRecords } from "../src/catalog.js";
+import { writeJsonAtomically } from "../src/geometry.js";
 import { refresh } from "../src/refresh.js";
 import { createViewCounter, handleViewsRequest } from "../src/views.js";
 
@@ -218,6 +227,38 @@ const catalogIsStale = async () => {
   }
 };
 
+/**
+ * Rebuild the world record feed's list, on every start.
+ *
+ * Two reasons it happens here and not only in the nightly job:
+ *
+ *   1. The volume is seeded from the image only the first time it is created, so a
+ *      generated file that is new in a release never appears on a volume that already
+ *      exists. The feed's list was exactly that, and the page had nothing to show.
+ *   2. A deploy should put the current records on screen, not last night's.
+ *
+ * Four API requests, a couple of seconds, so there is nothing to gain from being
+ * clever about when to skip it. A failure leaves the file that is already there: the
+ * feed being a day old is nothing, the feed being empty is a broken page.
+ */
+const refreshWorldRecordFeed = async () => {
+  try {
+    // The catalog supplies tiers and pictures. Missing costs those two fields.
+    const catalog = await readFile(MAPS_JSON, "utf8")
+      .then((text) => JSON.parse(text))
+      .catch(() => null);
+    const latest = await buildLatestWorldRecords(catalog?.maps ?? [], {
+      log: (message) => log(`  ${message}`),
+    });
+    await writeJsonAtomically(WRS_JSON, latest);
+    log(`world record feed: ${latest.records.length} runs`);
+  } catch (error) {
+    log(
+      `world record feed not rebuilt (${error.message}), keeping the old one`,
+    );
+  }
+};
+
 // --- routing ----------------------------------------------------------------
 
 const handle = async (request, response) => {
@@ -289,6 +330,10 @@ createServer((request, response) => {
   log(`  state    ${STATE_DIR}`);
   views.load();
   scheduleRefresh();
+  // The feed first, because it is four requests and the page it feeds is the one
+  // people land on. A full refresh, if one is needed, writes the same file again
+  // minutes later, and both writes are atomic.
+  refreshWorldRecordFeed();
   // A fresh volume has no catalog at all, and the browse page is empty without one.
   catalogIsStale().then((stale) => {
     if (stale) runRefresh("catalog was missing or stale");

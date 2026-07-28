@@ -485,10 +485,21 @@ export const createBrowse = ({ root, onWatch, onFeed }) => {
       entries = boards.entries ?? {};
       dom.replayButton.disabled = false;
 
+      // Same rule as the feed's empty state: a visitor gets told what is happening,
+      // and the command to fix it is a dev-only note. A page on the internet must
+      // never read like a terminal prompt.
       if (!catalog?.maps?.length) {
-        dom.count.textContent = "no catalog yet";
-        dom.grid.innerHTML =
-          '<div class="browse__empty">No map catalog on disk yet. Run <code>node bin/kzreplay.js refresh --no-geometry</code>.</div>';
+        dom.count.textContent = "loading the map list";
+        dom.grid.innerHTML = `
+          <div class="browse__empty">
+            The map list is not ready yet. It is rebuilt every night and again
+            whenever the site is updated, so this should fill itself in shortly.
+            ${
+              import.meta.env.DEV
+                ? "<br /><br />Dev: <code>node bin/kzreplay.js refresh --no-geometry</code>"
+                : ""
+            }
+          </div>`;
         return;
       }
 

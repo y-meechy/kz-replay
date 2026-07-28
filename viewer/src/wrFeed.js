@@ -375,12 +375,21 @@ export const createWrFeed = ({ root, getRun, onOpenInPlayer, onBack }) => {
 
       records = (feed?.records ?? []).filter((record) => record.recordId);
 
+      // A visitor is told what is happening in their own terms. What to type to fix
+      // it is a note to whoever is running the thing, so it is only shown on a dev
+      // server — a page on the internet must never read like a terminal prompt.
       if (records.length === 0) {
-        dom.subtitle.textContent = "no feed yet";
+        dom.subtitle.textContent = "nothing to show yet";
         dom.scroll.innerHTML = `
           <div class="reel__empty">
-            No world record feed on disk yet. Run
-            <code>node bin/kzreplay.js wrfeed</code>.
+            <p>No world records to show just yet.</p>
+            <p>The list is rebuilt every night and again whenever the site is
+            updated, so this should fill itself in shortly.</p>
+            ${
+              import.meta.env.DEV
+                ? '<p class="hint">Dev: <code>node bin/kzreplay.js wrfeed</code></p>'
+                : ""
+            }
           </div>`;
         return;
       }
