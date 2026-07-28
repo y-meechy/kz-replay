@@ -326,9 +326,8 @@ export const convertMap = async ({
     // exporter is about to come up short on. Wanted for three separate reasons: the flat
     // colour fallback, the choice of which surfaces the lighting atlas reaches, and the
     // list of base game materials to borrow.
-    const bakeLighting = withLightmap;
     let materialNames = null;
-    if (withColours || bakeLighting || withTextures) {
+    if (withColours || withLightmap || withTextures) {
       log("reading material names from the world nodes…");
       const named = await readMaterialNames({
         cli,
@@ -438,6 +437,7 @@ export const convertMap = async ({
     // foliage. This is where nearly all of the size goes — on kz_moss it is 251 MB
     // down to 3 MB, because 95% of the triangles in that map are leaves — and unlike
     // simplification it does not move a single vertex.
+    //
     // Textures and baked lighting are a pair, not alternatives: the mapper's own
     // surfaces, lit by the mapper's own sun. They address different things — one UV set
     // repeats a brick texture across a wall, the other finds that wall's patch of the
@@ -445,7 +445,7 @@ export const convertMap = async ({
     // rather than inside the .glb, because glTF has no light map slot and the base
     // colour slot is taken by the mapper's texture.
     let lightmap = null;
-    if (bakeLighting) {
+    if (withLightmap) {
       log("baking out the map's own lighting…");
       lightmap = await buildLightmap({
         cli,
@@ -511,7 +511,7 @@ export const convertMap = async ({
 
     const textures = textureCompressArgs({
       withTextures,
-      bakeLighting,
+      bakeLighting: withLightmap,
       textureSize,
     });
 
@@ -598,7 +598,7 @@ export const convertMap = async ({
         lightPath,
         await sharp(lightmap.png).webp({ quality: 85 }).toBuffer(),
       );
-    } else if (bakeLighting) {
+    } else if (withLightmap) {
       await rm(lightPath, { force: true });
     }
 

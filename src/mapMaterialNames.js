@@ -48,16 +48,8 @@ export const readMaterialNames = async ({
 
   await run(
     cli,
-    [
-      "-i",
-      mapVpk,
-      "-f",
-      `maps/${mapName}/worldnodes/`,
-      "-d",
-      "-o",
-      dumpDir,
-      // The dumps print one line per file and a map has hundreds.
-    ],
+    ["-i", mapVpk, "-f", `maps/${mapName}/worldnodes/`, "-d", "-o", dumpDir],
+    // The dumps print one line per file and a map has hundreds.
     { maxBuffer: 64 * 1024 * 1024 },
   );
 
