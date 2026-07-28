@@ -33,6 +33,7 @@ import { trimMap } from "./trimMap.js";
 import { buildLightmap } from "./mapLightmap.js";
 import { readMaterialNames } from "./mapMaterialNames.js";
 import { buildSky, readSkyName } from "./mapSky.js";
+import { borrowCs2Materials } from "./cs2Materials.js";
 import {
   cs2GameInfoPath,
   ensureCs2Assets,
@@ -319,7 +320,50 @@ export const convertMap = async ({
       );
     }
 
-    // 3b. Export the world. Shapes only unless textures were asked for, because
+    // 3b. Which material every surface was built with.
+    //
+    // Read before the export, not after, because it is what says which materials the
+    // exporter is about to come up short on. Wanted for three separate reasons: the flat
+    // colour fallback, the choice of which surfaces the lighting atlas reaches, and the
+    // list of base game materials to borrow.
+    const bakeLighting = withLightmap;
+    let materialNames = null;
+    if (withColours || bakeLighting || withTextures) {
+      log("reading material names from the world nodes…");
+      const named = await readMaterialNames({
+        cli,
+        mapVpk: innerVpk,
+        mapName,
+        workDir,
+        log,
+      });
+      materialNames = named.byMesh;
+      log(
+        `the world names a material for ${materialNames.size} meshes, ` +
+          `${named.paths.size} distinct`,
+      );
+
+      // The materials the mapper reused rather than made. Without these, a map built
+      // out of the game's own concrete exports with nothing to draw on almost every
+      // surface. See cs2Materials.js.
+      if (withTextures) {
+        await borrowCs2Materials({
+          cli,
+          cs2Dir,
+          toolsDir,
+          gameDir,
+          paths: named.paths,
+          log,
+        }).catch((error) => {
+          // Swallowed like the sky: a map with flat colours on its stock surfaces is
+          // still worth having, and this reaches out to Steam, so it can fail for
+          // reasons that have nothing to do with the map.
+          log(`could not borrow the base game materials: ${error.message}`);
+        });
+      }
+    }
+
+    // 3c. Export the world. Shapes only unless textures were asked for, because
     // decoding every material and image is the slowest part of the whole pipeline.
     log(
       withTextures
@@ -352,7 +396,7 @@ export const convertMap = async ({
       throw new Error(`the exporter produced no world.glb for ${mapName}`);
     }
 
-    // 3c. The map's real sky, written beside the .glb rather than into it: glTF has no
+    // 3d. The map's real sky, written beside the .glb rather than into it: glTF has no
     // slot for a scene background, and the viewer wants it as an equirectangular image
     // either way. Costs a few kilobytes, and one CS2 archive part the first time a
     // given sky is seen.
@@ -400,21 +444,6 @@ export const convertMap = async ({
     // lighting atlas — so the trim pass keeps both, and the atlas ships as its own file
     // rather than inside the .glb, because glTF has no light map slot and the base
     // colour slot is taken by the mapper's texture.
-    const bakeLighting = withLightmap;
-
-    let materialNames = null;
-    if (withColours || bakeLighting) {
-      log("reading material names from the world nodes…");
-      materialNames = await readMaterialNames({
-        cli,
-        mapVpk: innerVpk,
-        mapName,
-        workDir,
-        log,
-      });
-      log(`the world names a material for ${materialNames.size} meshes`);
-    }
-
     let lightmap = null;
     if (bakeLighting) {
       log("baking out the map's own lighting…");
@@ -502,6 +531,16 @@ export const convertMap = async ({
           // them into a palette texture would add an image to a file that has one
           // already, and on a lightmapped map it would overwrite the lighting.
           ...(withColours || withLightmap ? ["--palette", "false"] : []),
+          // Keep the lighting atlas's UVs. The optimizer prunes a vertex attribute
+          // nothing in the file references, and nothing in the file does reference
+          // this one: the atlas ships beside the .glb, because glTF has no light map
+          // slot, and the viewer pairs the two up at load time. So the optimizer threw
+          // away every map's baked lighting on the way out, which is why a textured
+          // map arrived lit only by the viewer's own invented lights — flat, and far
+          // darker than the same map in the game. Nothing else is kept by this: the
+          // trim pass has already dropped every attribute that really is unused.
+          "--prune-attributes",
+          "false",
           // Do not weld the map into one shape. Joining every mesh that shares a
           // material sounds like a saving and is the opposite: the result is a
           // handful of shapes that each span the whole map, so nothing is ever off

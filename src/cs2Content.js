@@ -29,7 +29,14 @@
 // not worth it yet.
 
 import { execFile } from "node:child_process";
-import { mkdir, readFile, writeFile, rm, stat } from "node:fs/promises";
+import {
+  mkdir,
+  readdir,
+  readFile,
+  writeFile,
+  rm,
+  stat,
+} from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -61,9 +68,30 @@ const cs2ContentDir = (cs2Dir) => join(cs2Dir, CONTENT_PREFIX);
 /** The archive index, which every asset lookup goes through. */
 export const cs2IndexPath = (cs2Dir) => join(cs2ContentDir(cs2Dir), INDEX_FILE);
 
-/** One archive part, named the same way in the depot and in the cache. */
-const partFile = (part) =>
-  `${CONTENT_PREFIX}/pak01_${String(part).padStart(3, "0")}.vpk`;
+/**
+ * Where an archive sits inside the cache, given either its part number or its file name.
+ *
+ * Named the same way in the depot and in the cache, so one function answers for both.
+ */
+export const cs2ArchivePath = (partOrName) =>
+  `${CONTENT_PREFIX}/${
+    typeof partOrName === "number"
+      ? `pak01_${String(partOrName).padStart(3, "0")}.vpk`
+      : partOrName
+  }`;
+
+const partFile = cs2ArchivePath;
+
+/**
+ * The archives the cache actually holds, the index among them.
+ *
+ * Which is a subset of the depot's 479, and the point of the whole cache: mounting
+ * these makes exactly the assets that were borrowed resolvable. See cs2Materials.js.
+ */
+export const cs2ArchiveFiles = async (cs2Dir) =>
+  (await readdir(cs2ContentDir(cs2Dir))).filter((file) =>
+    /^pak01_.*\.vpk$/.test(file),
+  );
 
 /** The file that makes ValveResourceFormat treat the cache as a game. */
 export const cs2GameInfoPath = (cs2Dir) =>
@@ -193,6 +221,10 @@ export const readCs2Index = async ({ cs2Dir, cli, log = () => {} }) => {
  * @param paths uncompiled asset paths as a map names them, e.g.
  *              `materials/skybox/sky_de_annubis.vmat`. The compiled `_c` suffix is
  *              added here, because that is what is actually in the archive.
+ * @param siblings also fetch everything whose name starts with the same stem. Worth it
+ *              for a sky, whose texture is named after it. Turn it off when the caller
+ *              knows the companions by name: it over-matches, so a material called
+ *              `wood01` drags in every `wood01_*` in the game.
  * @returns { fetched, missing } — parts downloaded, and paths CS2 does not have
  */
 export const ensureCs2Assets = async ({
@@ -200,6 +232,7 @@ export const ensureCs2Assets = async ({
   toolsDir,
   cli,
   paths,
+  siblings = true,
   log = () => {},
 }) => {
   await syncCs2Index({ cs2Dir, toolsDir, log });
@@ -232,6 +265,7 @@ export const ensureCs2Assets = async ({
     // This over-matches when one name is a prefix of another, so `wood01` also drags in
     // `wood01_dark`. The cost of that is a few extra chunks, against a texture that
     // silently fails to load.
+    if (!siblings) continue;
     const stem = lower.replace(/\.[a-z0-9_]+$/, "_");
     for (const [asset, at] of index) {
       if (asset !== `${lower}_c` && asset.startsWith(stem)) want(at);
