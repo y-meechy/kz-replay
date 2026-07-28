@@ -14,7 +14,8 @@
 
 import { LEADERBOARDS, leaderboardKey } from "../../src/leaderboards.js";
 import { loadRunById, parseRecordIds } from "./loadRun.js";
-import { formatRunTime, tierFraction, tierLabel } from "./format.js";
+import { escapeHtml, formatRunTime, tierLabel, tierStyle } from "./format.js";
+import { fetchViews, viewsLabel } from "./views.js";
 
 const fetchJson = async (url, fallback) => {
   try {
@@ -26,26 +27,7 @@ const fetchJson = async (url, fallback) => {
   }
 };
 
-/** Colour a tier chip from green to red across the tier list. */
-const tierStyle = (tier) => {
-  const hue = 140 - tierFraction(tier) * 140;
-  return `background: hsl(${hue} 70% 45% / 0.18); color: hsl(${hue} 80% 72%); border-color: hsl(${hue} 60% 50% / 0.35)`;
-};
-
-const escapeHtml = (value) =>
-  String(value ?? "").replace(
-    /[&<>"']/g,
-    (character) =>
-      ({
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;",
-      })[character],
-  );
-
-export const createBrowse = ({ root, onWatch }) => {
+export const createBrowse = ({ root, onWatch, onFeed }) => {
   let maps = [];
   let entries = {};
   let geometry = {};
@@ -143,6 +125,23 @@ export const createBrowse = ({ root, onWatch }) => {
   };
 
   /**
+   * How many people have watched the run this leaderboard offers.
+   *
+   * Fetched per selection rather than for the whole grid: the front page shows 82
+   * maps and about 420 leaderboards, and nobody needs a count for a run they have not
+   * looked at yet.
+   */
+  const renderViews = (recordId) => {
+    dom.views.textContent = "";
+    if (!recordId) return;
+    fetchViews([recordId]).then(({ views }) => {
+      // A different course or mode may have been picked while this was in flight.
+      if (currentSelection()?.entry?.watchable?.id !== recordId) return;
+      dom.views.textContent = `${viewsLabel(views[recordId] ?? 0)} of this replay`;
+    });
+  };
+
+  /**
    * The record, and what can actually be watched.
    *
    * Three cases, and each of them has to read differently, because "the record has
@@ -154,6 +153,7 @@ export const createBrowse = ({ root, onWatch }) => {
     const { entry } = selection;
     dom.watch.disabled = !entry?.watchable;
     dom.compareButton.disabled = !entry?.watchable;
+    renderViews(entry?.watchable?.id ?? null);
 
     if (!entry) {
       dom.result.innerHTML =
@@ -350,6 +350,9 @@ export const createBrowse = ({ root, onWatch }) => {
         </div>
       </div>
       <div class="browse__tools">
+        <button id="browse-feed" class="button button--primary button--feed" type="button">
+          ▶ Latest world records
+        </button>
         <input id="browse-filter" class="input" type="search" placeholder="filter by map name" spellcheck="false" />
         <label class="checkbox"><input type="checkbox" id="browse-glb" /><span>only maps with 3D geometry</span></label>
       </div>
@@ -390,6 +393,7 @@ export const createBrowse = ({ root, onWatch }) => {
           </div>
 
           <div class="sheet__result" id="sheet-result"></div>
+          <div class="sheet__views" id="sheet-views"></div>
 
           <button class="button button--primary button--wide" id="sheet-watch" type="button">Watch this run</button>
 
@@ -423,7 +427,9 @@ export const createBrowse = ({ root, onWatch }) => {
     course: root.querySelector("#sheet-course"),
     mode: root.querySelector("#sheet-mode"),
     result: root.querySelector("#sheet-result"),
+    views: root.querySelector("#sheet-views"),
     watch: root.querySelector("#sheet-watch"),
+    feed: root.querySelector("#browse-feed"),
     compareInput: root.querySelector("#sheet-compare-id"),
     compareButton: root.querySelector("#sheet-compare"),
     compareError: root.querySelector("#sheet-compare-error"),
@@ -439,6 +445,7 @@ export const createBrowse = ({ root, onWatch }) => {
     geometryOnly = event.target.checked;
     renderGrid();
   });
+  dom.feed.addEventListener("click", () => onFeed?.());
   dom.replayButton.addEventListener("click", resolveReplay);
   dom.replayInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") resolveReplay();

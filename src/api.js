@@ -95,18 +95,27 @@ export const fetchReplay = async (recordId) => {
  *
  * `max_rank=1` restricts to rank one and `top=true` to each course's best, which
  * together is the world record per course and mode.
+ *
+ * The sort is spelled out rather than left to the API's default, because the order
+ * is the whole point of the call: the feed shows the records that were set most
+ * recently, and `submission-date` is what "most recently" means. (The API's default
+ * happens to be the same today. That is not something to build on.)
  */
 export const fetchWorldRecords = async ({
   mode = "classic",
   hasTeleports = false,
   limit = 20,
   offset = 0,
+  sortBy = "submission-date",
+  sortOrder = "descending",
 } = {}) => {
   const params = new URLSearchParams({
     mode,
     top: "true",
     max_rank: "1",
     has_teleports: String(hasTeleports),
+    sort_by: sortBy,
+    sort_order: sortOrder,
     limit: String(limit),
     offset: String(offset),
   });

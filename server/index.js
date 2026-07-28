@@ -1,13 +1,15 @@
 // The deployed app: static files, one proxy, one scheduler. No framework.
 //
-// Three jobs it does that a static host cannot:
+// Four jobs it does that a static host cannot:
 //
 //   1. Proxy the replay bucket. replays.cs2kz.org is public but sends no CORS
 //      headers, so a browser cannot fetch it directly. This is the one line of
 //      server the whole viewer actually requires.
 //   2. Serve the generated data and the converted map geometry from a writable
 //      volume, so a redeploy does not wipe hours of map conversion.
-//   3. Run the nightly refresh: new maps, new records, convert what is missing.
+//   3. Count views. The only thing here that is written by visitors rather than by
+//      the nightly job, and the only reason there is any state to lose.
+//   4. Run the nightly refresh: new maps, new records, convert what is missing.
 //
 // Everything else is the Vite build output, served as files.
 
@@ -15,8 +17,9 @@ import { createServer } from "node:http";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep } from "node:path";
-import { DATA_DIR, MAPS_DIR, REPO_ROOT } from "../src/config.js";
+import { DATA_DIR, MAPS_DIR, REPO_ROOT, STATE_DIR } from "../src/config.js";
 import { refresh } from "../src/refresh.js";
+import { createViewCounter, handleViewsRequest } from "../src/views.js";
 
 const PORT = Number(process.env.PORT ?? 8080);
 const DIST_DIR = process.env.KZ_DIST_DIR
@@ -53,6 +56,8 @@ const cacheControl = (path) => {
 
 const log = (...parts) =>
   console.log(`[${new Date().toISOString()}]`, ...parts);
+
+const views = createViewCounter({ log: (message) => log(message) });
 
 /**
  * Resolve a url path inside a directory, or null if it escapes.
@@ -216,6 +221,10 @@ const catalogIsStale = async () => {
 // --- routing ----------------------------------------------------------------
 
 const handle = async (request, response) => {
+  // The view counter is the only thing here that accepts a POST, so it is routed
+  // before the method check rather than after it.
+  if (await handleViewsRequest(request, response, views)) return;
+
   if (request.method !== "GET" && request.method !== "HEAD") {
     response.writeHead(405, { allow: "GET, HEAD" });
     response.end();
@@ -227,7 +236,12 @@ const handle = async (request, response) => {
   const path = url.pathname;
 
   if (path === "/healthz") {
-    sendJson(response, 200, { ok: true, refreshing, lastRefresh });
+    sendJson(response, 200, {
+      ok: true,
+      refreshing,
+      lastRefresh,
+      views: views.stats(),
+    });
     return;
   }
 
@@ -272,6 +286,8 @@ createServer((request, response) => {
   log(`  app      ${DIST_DIR}`);
   log(`  data     ${DATA_DIR}`);
   log(`  geometry ${MAPS_DIR}`);
+  log(`  state    ${STATE_DIR}`);
+  views.load();
   scheduleRefresh();
   // A fresh volume has no catalog at all, and the browse page is empty without one.
   catalogIsStale().then((stale) => {

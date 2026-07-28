@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import { resolve } from "node:path";
 import { convertMapPlugin } from "./convertMapPlugin.js";
+import { viewsPlugin } from "./viewsPlugin.js";
 
 // The viewer imports src/track.js from the repo root (the decoder is shared with
 // the CLI so the two can never disagree), so the dev server has to be allowed to
@@ -9,7 +10,7 @@ const here = import.meta.dirname;
 
 export default defineConfig({
   root: here,
-  plugins: [convertMapPlugin()],
+  plugins: [convertMapPlugin(), viewsPlugin()],
   server: {
     port: 5180,
     fs: { allow: [resolve(here, "..")] },

@@ -15,7 +15,7 @@
 // Cost: 156 courses x 4 leaderboards is about 620 requests, which is why this runs
 // on a schedule and writes a file rather than happening when someone opens the page.
 
-import { fetchAllMaps, fetchLeaderboard } from "./api.js";
+import { fetchAllMaps, fetchLeaderboard, fetchWorldRecords } from "./api.js";
 import { LEADERBOARDS, leaderboardKey } from "./leaderboards.js";
 import { fetchWorkshopPreviews } from "./workshop.js";
 
@@ -189,4 +189,127 @@ export const buildLeaderboards = async (
   );
 
   return { updatedAt: new Date().toISOString(), entries };
+};
+
+/**
+ * When a record was set, read out of its own id.
+ *
+ * The API has no timestamp on a record: `/records` will sort by `submission-date`
+ * but never tells you the date it sorted on. Record ids are UUIDv7, and the first
+ * 48 bits of a UUIDv7 are the millisecond it was generated, so the id carries the
+ * answer. The check that this is the right number rather than a plausible one: the
+ * ids come back in exactly the order the API's own submission-date sort puts them,
+ * every time, across all four leaderboards.
+ *
+ * Guarded rather than trusted. Anything that is not version 7, or lands outside the
+ * years CS2KZ has existed, returns null and the feed simply shows no date.
+ */
+const setAtFromRecordId = (recordId) => {
+  const hex = String(recordId).replace(/-/g, "");
+  if (hex.length !== 32 || hex[12] !== "7") return null;
+  const milliseconds = Number.parseInt(hex.slice(0, 12), 16);
+  if (!Number.isFinite(milliseconds)) return null;
+  // CS2 itself did not exist before 2023, and a record cannot be set tomorrow.
+  const earliest = Date.UTC(2023, 0, 1);
+  if (milliseconds < earliest || milliseconds > Date.now() + 86_400_000) {
+    return null;
+  }
+  return new Date(milliseconds).toISOString();
+};
+
+/**
+ * One `/records` row as a card in the feed.
+ *
+ * @param board which leaderboard the row was fetched from
+ * @param map the catalog entry for the row's map, or undefined with no catalog on disk
+ */
+const toFeedRecord = (row, board, map) => {
+  const course = map?.courses.find(
+    (candidate) => candidate.name === row.course?.name,
+  );
+  const tiers = course?.tiers?.[board.mode];
+  return {
+    recordId: row.id,
+    map: row.map?.name ?? null,
+    course: row.course?.name ?? null,
+    mode: board.mode,
+    hasTeleports: board.hasTeleports,
+    board: board.id,
+    boardLabel: board.label,
+    player: row.player?.name ?? null,
+    time: row.time,
+    teleports: row.teleports ?? 0,
+    // The tier of the course as this mode ranks it, so the card can say how hard the
+    // thing you are watching actually is.
+    tier: board.hasTeleports ? (tiers?.nub ?? null) : (tiers?.pro ?? null),
+    state: tiers?.state ?? null,
+    image: map?.image ?? null,
+    server: row.server?.name ?? null,
+    setAt: setAtFromRecordId(row.id),
+  };
+};
+
+/**
+ * The world records that were set most recently, newest first.
+ *
+ * Four requests, not 620: `max_rank=1&top=true` already means "the record of every
+ * course" and the sort already means "newest first", so one request per leaderboard
+ * covers every map at once. That is why this can be rebuilt on its own in a second
+ * (`kzreplay wrfeed`) instead of waiting for the full nightly catalog.
+ *
+ * Records with no replay file are left out entirely, which is the one place this
+ * differs from the browse page. Browse has something honest to say about a record it
+ * cannot play — "the record has no replay, here is rank 4". A feed does not: it is a
+ * stack of runs you scroll through and watch, and an item that cannot be watched is
+ * just a dead card. Roughly one WR in ten is in that state at any time.
+ *
+ * @param maps the `maps` array from buildMapCatalog, for tiers and pictures
+ */
+export const buildLatestWorldRecords = async (
+  maps = [],
+  { perBoard = 40, limit = 60, log = () => {} } = {},
+) => {
+  log(`fetching the latest world records on ${LEADERBOARDS.length} boards…`);
+
+  const mapByName = new Map(maps.map((map) => [map.name, map]));
+  let failed = 0;
+  const pages = await Promise.all(
+    LEADERBOARDS.map(async (board) => {
+      try {
+        const rows = await fetchWorldRecords({
+          mode: board.mode,
+          hasTeleports: board.hasTeleports,
+          limit: perBoard,
+        });
+        return { board, rows };
+      } catch (error) {
+        failed += 1;
+        log(`  ${board.id} failed: ${error.message}`);
+        return { board, rows: [] };
+      }
+    }),
+  );
+
+  // Every request failing means the network was down, not that the game has no world
+  // records. Saying so is the caller's cue to keep the file it already has: an empty
+  // feed written over a good one is a five second outage turned into a day of it.
+  if (failed === LEADERBOARDS.length) {
+    throw new Error(
+      `could not reach the CS2KZ API on any of the ${LEADERBOARDS.length} leaderboards`,
+    );
+  }
+
+  const records = pages
+    .flatMap(({ board, rows }) =>
+      rows
+        .filter((row) => row.replay_available)
+        .map((row) => toFeedRecord(row, board, mapByName.get(row.map?.name))),
+    )
+    // Four separate "newest first" lists, interleaved into one.
+    .sort((a, b) => String(b.setAt ?? "").localeCompare(String(a.setAt ?? "")))
+    .slice(0, limit);
+
+  log(`${records.length} recent world records have a replay to watch`);
+
+  return { updatedAt: new Date().toISOString(), records };
 };

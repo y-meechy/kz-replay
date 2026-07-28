@@ -3,6 +3,7 @@
 //
 //   kzreplay fetch <record_id>...        download, parse, write a track
 //   kzreplay wrs [--mode m] [--limit n]  fetch the current world records
+//   kzreplay wrfeed [--limit n]          rebuild the WR feed the /wr page scrolls
 //   kzreplay map <map_name>              convert a workshop map to .glb
 //   kzreplay compare <a> <b>             full stats for two runs, and the time delta
 //   kzreplay inspect <file|record_id>    dump the header and section table
@@ -16,6 +17,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseReplay, replayToTrack } from "../src/index.js";
 import { fetchMap, fetchReplay, fetchWorldRecords } from "../src/api.js";
+import { buildLatestWorldRecords } from "../src/catalog.js";
+import { MAPS_JSON, WRS_JSON } from "../src/config.js";
+import { writeJsonAtomically } from "../src/geometry.js";
 import { convertMap } from "../src/mapPipeline.js";
 import { analyseRun } from "../src/analysis.js";
 import { compareRuns } from "../src/compare.js";
@@ -159,6 +163,45 @@ const commands = {
       }
     }
     console.log(`\nindex.json now lists ${await refreshIndex()} track(s)`);
+  },
+
+  /**
+   * Rebuild wrs.json, the list the /wr feed scrolls through.
+   *
+   * Four API requests, so this is the one part of the catalog that is cheap enough
+   * to rerun whenever you want the newest records on screen. The nightly refresh
+   * writes the same file; this just skips the other 620 requests.
+   */
+  async wrfeed({ flags }) {
+    // Tiers and pictures come from the map catalog rather than the records endpoint,
+    // so a missing catalog costs those two fields and nothing else.
+    const catalog = await readFile(MAPS_JSON, "utf8")
+      .then((text) => JSON.parse(text))
+      .catch(() => null);
+    if (!catalog) {
+      console.log(
+        `no map catalog at ${MAPS_JSON}, so tiers and pictures will be missing —\n` +
+          "run `kzreplay refresh --no-geometry` once to build it\n",
+      );
+    }
+
+    const latest = await buildLatestWorldRecords(catalog?.maps ?? [], {
+      limit: Number(flags.limit ?? 60),
+      log: (message) => console.log(`  ${message}`),
+    });
+    await writeJsonAtomically(WRS_JSON, latest, 2);
+
+    console.log(`\nwrote ${WRS_JSON}`);
+    for (const record of latest.records.slice(0, 10)) {
+      console.log(
+        `  ${(record.setAt ?? "").slice(0, 10)}  ${record.map}/${record.course} ` +
+          `${record.mode}${record.hasTeleports ? " TP" : ""} ` +
+          `${seconds(record.time)} by ${record.player}`,
+      );
+    }
+    if (latest.records.length > 10) {
+      console.log(`  … and ${latest.records.length - 10} more`);
+    }
   },
 
   async map({ positional, flags }) {

@@ -20,6 +20,7 @@ ENV NODE_ENV=production \
     TZ=Europe/Berlin \
     KZ_DATA_DIR=/data/catalog \
     KZ_MAPS_DIR=/data/maps \
+    KZ_STATE_DIR=/data/state \
     KZ_TOOLS_DIR=/opt/kz-tools
 
 # Copying the build output before installing runtime tools makes BuildKit finish

@@ -29,6 +29,22 @@ export const MAPS_DIR = fromEnv(
 /** steamcmd's download area and the Source 2 exporter. Never served. */
 export const TOOLS_DIR = fromEnv("KZ_TOOLS_DIR", join(REPO_ROOT, "tools"));
 
+/**
+ * State the running app writes itself, as opposed to the catalog, which the nightly
+ * refresh regenerates from the API.
+ *
+ * Kept out of DATA_DIR on purpose. Everything in there is generated, replaceable and
+ * seeded into the volume from the image on first boot; the view counter is none of
+ * those things and must never be overwritten by a copy of the bundled files.
+ */
+export const STATE_DIR = fromEnv("KZ_STATE_DIR", join(REPO_ROOT, ".state"));
+
 export const MAPS_JSON = join(DATA_DIR, "maps.json");
 export const LEADERBOARDS_JSON = join(DATA_DIR, "leaderboards.json");
 export const GEOMETRY_JSON = join(DATA_DIR, "geometry.json");
+
+/** The most recently set world records, newest first. The feed reads this. */
+export const WRS_JSON = join(DATA_DIR, "wrs.json");
+
+/** How many people have watched each run. */
+export const VIEWS_JSON = join(STATE_DIR, "views.json");

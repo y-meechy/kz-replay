@@ -14,3 +14,6 @@ viewer/dist/
 
 # Source2Viewer-CLI drops this next to the repo when a material fails to load.
 exceptions.txt
+
+# Counts and other state the running app writes itself.
+.state/

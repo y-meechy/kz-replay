@@ -10,10 +10,17 @@
     <!-- The front page. Filled in by src/browse.js. -->
     <main class="browse" id="browse" hidden></main>
 
+    <!-- The world record feed: one screen per record, scrolled. Filled in by
+         src/wrFeed.js, which owns its own canvas. -->
+    <main class="reel" id="wr" hidden></main>
+
     <!-- The player. One canvas, one panel of numbers, one row of controls. -->
     <div class="watch" id="watch" hidden>
       <canvas id="stage"></canvas>
       <div class="active-pov" id="active-pov" hidden>POV · —</div>
+      <!-- How many people have watched this run. Hidden until there is a number,
+           because "— views" says nothing. -->
+      <div class="watch-views" id="watch-views" hidden></div>
       <button
         id="stats-toggle"
         class="button stats-toggle"
@@ -240,6 +247,22 @@
         Both runs have to be the same map, the same course and the same mode. If
         they are not, the viewer loads the first one on its own and tells you
         why.
+      </p>
+
+      <h2>The world record feed</h2>
+      <pre class="docs__code">
+/wr
+/wr?id=&lt;record id&gt;</pre>
+      <p>
+        The newest world records in the game, one screen each, scrolled like a
+        phone feed. The record on screen is always in the address bar, so a link
+        opens on the run you were looking at.
+      </p>
+      <p>
+        Every run plays through the runner's eyes and loops. The feed has no
+        controls on purpose: <code>↑</code> <code>↓</code> move between records
+        and <code>enter</code> opens the one on screen in the full player, where
+        the cameras, the timeline and the comparison live.
       </p>
 
       <h2>Camera</h2>
