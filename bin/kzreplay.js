@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 import { parseReplay, replayToTrack } from "../src/index.js";
 import { fetchMap, fetchReplay, fetchWorldRecords } from "../src/api.js";
 import { buildLatestWorldRecords } from "../src/catalog.js";
-import { MAPS_JSON, WRS_JSON } from "../src/config.js";
+import { MAPS_DIR, MAPS_JSON, TOOLS_DIR, WRS_JSON } from "../src/config.js";
 import { writeJsonAtomically } from "../src/geometry.js";
 import { convertMap } from "../src/mapPipeline.js";
 import { analyseRun } from "../src/analysis.js";
@@ -224,8 +224,11 @@ const commands = {
     const { path } = await convertMap({
       mapName: map.name,
       workshopId: String(map.workshop_id),
-      toolsDir: join(ROOT, "tools"),
-      outputDir: join(ROOT, "viewer", "public", "maps"),
+      // From config, not from the checkout: in the deployed container the tools are in
+      // /opt/kz-tools and the maps belong on the volume, and hardcoding the repo layout
+      // made `kzreplay map` a command that only worked in development.
+      toolsDir: TOOLS_DIR,
+      outputDir: MAPS_DIR,
       steamcmd: flags.steamcmd ?? "steamcmd",
       // The mapper's own materials and textures, which the workshop item carries.
       // On by default; --no-textures falls back to the map's baked lighting over
