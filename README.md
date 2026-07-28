@@ -91,7 +91,7 @@ otherwise bury the camera in solid rock; the inside cameras keep it opaque.
 | `kzreplay verify --limit 60`   | Parse many replays and report any that desync            |
 | `kzreplay map kz_victoria`     | Download and convert one map's geometry to a web glb     |
 | `kzreplay compare <a> <b>`     | Full stats for two runs, and where the time was lost     |
-| `npm run check`                | Alignment sanity check across four known run pairs       |
+| `npm run check`                | Section and alignment check across four known run pairs  |
 
 Tracks are written to `viewer/public/tracks/`, which the dev server reads directly.
 Downloaded `.replay` files are cached in `samples/` so re-runs need no network.
@@ -170,9 +170,27 @@ Open a map and paste another replay id into **Compare with replay ID**. Compatib
 runs load immediately; mismatched maps, courses, or modes are rejected with a clear
 message instead of producing a misleading comparison.
 
-**Analysis** opens one focused, clickable time-gap chart plus side-by-side run
-statistics. Shaded bands keep the important gains and losses visible, and clicking
-anywhere on the graph seeks both replays to that point on the course.
+**Analysis** opens one focused, clickable time-gap chart, the section table, and
+side-by-side run statistics. Shaded bands keep the important gains and losses
+visible, and clicking anywhere on the graph seeks both replays to that point on the
+course.
+
+**The section table is where the time actually went.** The course is cut at the
+places both runs touched the ground: in KZ a run is airborne about 90% of the time,
+so a touchdown is a rare, deliberate event, and two runs landing within a block's
+width of each other were standing on the same thing. Each section is then timed on
+each run's own clock, in whole ticks, which has two consequences worth knowing:
+
+- A section time owes nothing to how well the two lines were matched up. It is a
+  tick count between two events that really happened in both runs.
+- The section deltas telescope, so they add up to the finishing gap exactly. The
+  table can never tell a story the scoreboard disagrees with.
+
+Landings come in bursts, so boundaries are thinned until every section lasts at least
+1.5s, and a stretch with no landing at all — a slide, a ladder, a long run-up — is cut
+by distance instead and marked as such. Anything under two ticks is left uncoloured:
+section times are exact, so a difference nobody could feel should not be dressed up as
+a mistake.
 
 **The most useful number in there** is the split between _a longer line_ and _less
 speed_. Time is distance over speed, so a gap can only come from covering more
@@ -203,7 +221,7 @@ to that would flatten everything worth looking at.
 ## Comparing two runs on the command line
 
 ```bash
-node bin/kzreplay.js compare <faster_id> <slower_id> [--sectors 20] [--json out.json]
+node bin/kzreplay.js compare <faster_id> <slower_id> [--seconds 1.5] [--json out.json]
 ```
 
 The point of the comparison is that **the two runs are never compared at the same
@@ -217,7 +235,10 @@ reference's path to answer "how far along the course was this?". That gives both
 runs a shared axis, and the time difference along it is the racing delta everyone
 already understands from F1 or Trackmania.
 
-The report covers the sector-by-sector delta with a chart, the biggest gains and
+The section table then cuts that axis at the landings both runs share, as above, and
+`--seconds` sets the shortest section worth a row.
+
+The report covers the section-by-section delta with a chart, the biggest gains and
 losses, speed, route length and efficiency, air and ground time, every jump with
 takeoff speed, airtime, distance, strafe count and sync, perfect bhop rate, aim
 movement, key hold times, how far apart the two lines are, and a jump by jump table

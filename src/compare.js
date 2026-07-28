@@ -11,6 +11,9 @@
 // runs a shared x axis, and the time difference at each point along it is the
 // familiar racing delta: positive means the challenger is behind.
 
+import { FL_ONGROUND } from "./ticks.js";
+import { buildSections } from "./sections.js";
+
 const TICK_RATE = 64;
 
 /**
@@ -273,51 +276,17 @@ export const deltaCurve = ({
   return { courseLength, curve };
 };
 
-/** Equal-distance sectors, with the time each run spent in each one. */
-export const sectorTable = ({
-  referenceProgress,
-  challengerProgress,
-  courseLength,
-  tickRate = TICK_RATE,
-  sectorCount = 20,
-}) => {
-  const sectors = [];
-  for (let s = 0; s < sectorCount; s++) {
-    const startDistance = (courseLength * s) / sectorCount;
-    const endDistance = (courseLength * (s + 1)) / sectorCount;
-    const refStart = timeAtDistance(referenceProgress, startDistance, tickRate);
-    const refEnd = timeAtDistance(referenceProgress, endDistance, tickRate);
-    const challengerStart = timeAtDistance(
-      challengerProgress,
-      startDistance,
-      tickRate,
-    );
-    const challengerEnd = timeAtDistance(
-      challengerProgress,
-      endDistance,
-      tickRate,
-    );
-    const referenceTime = refEnd - refStart;
-    const challengerTime = challengerEnd - challengerStart;
-
-    sectors.push({
-      sector: s + 1,
-      fromDistance: Math.round(startDistance),
-      toDistance: Math.round(endDistance),
-      referenceTime: +referenceTime.toFixed(3),
-      challengerTime: +challengerTime.toFixed(3),
-      // Positive: the challenger lost time here.
-      delta: +(challengerTime - referenceTime).toFixed(3),
-      cumulativeDelta: +(challengerEnd - refEnd).toFixed(3),
-      referenceSpeed: Math.round(
-        (endDistance - startDistance) / Math.max(referenceTime, 1e-6),
-      ),
-      challengerSpeed: Math.round(
-        (endDistance - startDistance) / Math.max(challengerTime, 1e-6),
-      ),
-    });
-  }
-  return sectors;
+/**
+ * Whether a run was standing on something, indexed by position along its path.
+ *
+ * The path skips paused ticks, so its indices are not tick numbers; this maps them
+ * back to the raw ticks the flag lives on.
+ */
+const onGroundOf = (analysis) => {
+  const { ticks, from, tickIndices } = analysis._series;
+  return tickIndices
+    ? (i) => (ticks.entityFlags[tickIndices[i]] & FL_ONGROUND) !== 0
+    : (i) => (ticks.entityFlags[from + i] & FL_ONGROUND) !== 0;
 };
 
 /**
@@ -325,33 +294,38 @@ export const sectorTable = ({
  *
  * @param reference  the run to measure against (normally the faster one)
  * @param challenger the run being examined
- * @param sectorCount how many equal-distance sectors to split the course into
+ * @param minSeconds shortest section worth a row of its own
  */
 export const compareRuns = (
   reference,
   challenger,
-  { sectorCount = 20, curveSamples = 200 } = {},
+  { minSeconds = 1.5, maxSeconds = 5, curveSamples = 200 } = {},
 ) => {
   // The reference is trivially aligned to itself: distance along its own path.
-  const refProgress = pathOf(reference).cumulative;
+  const referencePath = pathOf(reference);
+  const challengerPath = pathOf(challenger);
+  const referenceProgress = referencePath.cumulative;
   const { progress: challengerProgress, deviation } = alignPaths(
-    pathOf(reference),
-    pathOf(challenger),
+    referencePath,
+    challengerPath,
   );
 
   const { courseLength, curve } = deltaCurve({
-    referenceProgress: refProgress,
+    referenceProgress,
     challengerProgress,
     samples: curveSamples,
   });
-  const sectors = sectorTable({
-    referenceProgress: refProgress,
+  const { sections, touches } = buildSections({
+    referencePath,
+    challengerPath,
     challengerProgress,
-    courseLength,
-    sectorCount,
+    referenceOnGround: onGroundOf(reference),
+    challengerOnGround: onGroundOf(challenger),
+    minSeconds,
+    maxSeconds,
   });
 
-  const byLoss = [...sectors].sort((a, b) => b.delta - a.delta);
+  const byLoss = [...sections].sort((a, b) => b.delta - a.delta);
 
   // Jumps, matched by where on the course they happened rather than by index, so a
   // missing or extra jump does not shift everything after it.
@@ -416,14 +390,15 @@ export const compareRuns = (
   return {
     courseLength: Math.round(courseLength),
     /** Full length of the reference path, to judge how much was compared. */
-    referenceLength: Math.round(refProgress[refProgress.length - 1]),
+    referenceLength: Math.round(referenceProgress.at(-1)),
     finalDelta: +(
       challenger.run.reportedTime - reference.run.reportedTime
     ).toFixed(4),
     curve,
-    sectors,
-    worstSectors: byLoss.slice(0, 5),
-    bestSectors: byLoss.slice(-5).reverse(),
+    sections,
+    touches,
+    worstSections: byLoss.slice(0, 5),
+    bestSections: byLoss.slice(-5).reverse(),
     line: {
       // How far apart the two lines are, in Source units.
       medianDeviation: Math.round(

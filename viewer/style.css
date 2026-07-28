@@ -1179,6 +1179,15 @@ body {
   border-bottom: 1px solid rgba(148, 163, 184, 0.07);
 }
 
+/* Rows that go somewhere when clicked. */
+.table--rows tbody tr {
+  cursor: pointer;
+}
+
+.table--rows tbody tr:hover {
+  background: rgba(148, 163, 184, 0.08);
+}
+
 @media (max-width: 900px) {
   .replay-entry {
     grid-template-columns: 1fr;

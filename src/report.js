@@ -1,6 +1,8 @@
 // Text rendering for the run comparison. Pure formatting: all the numbers come
 // from analysis.js and compare.js.
 
+import { blameOf } from "./sections.js";
+
 const pad = (value, width) => String(value).padStart(width);
 const padEnd = (value, width) => String(value).padEnd(width);
 
@@ -77,52 +79,68 @@ export const renderComparison = ({ reference, challenger, comparison }) => {
   );
 
   // --- where the time went -------------------------------------------------
+  const { sections, touches } = comparison;
+  const cut = sections.filter((section) => section.kind === "split").length;
+
   out.push("");
   out.push(rule("WHERE THE TIME WENT"));
   out.push(
-    `Course split into ${comparison.sectors.length} sectors of equal distance ` +
-      `(${comparison.courseLength} units total).`,
+    `Course split into ${sections.length} sections at places both runs touched the ` +
+      `ground.`,
+  );
+  out.push(
+    `${refName} touched down ${touches.reference} times, ${challengerName} ` +
+      `${touches.challenger}, and ${touches.matched} of those were the same place` +
+      (cut > 0
+        ? `. ${cut} section(s) had no landing in them and were cut by distance instead.`
+        : "."),
+  );
+  out.push(
+    `Times are exact tick counts on each run's own clock, so the deltas add up to ` +
+      `the final gap.`,
   );
   out.push(`Bar left of centre: ${challengerName} faster. Right: slower.`);
   out.push("");
 
   const scale = Math.max(
-    ...comparison.sectors.map((s) => Math.abs(s.delta)),
+    ...sections.map((section) => Math.abs(section.delta)),
     0.01,
   );
   out.push(
-    `${padEnd("sector", 8)}${pad("dist", 7)}${pad(refName.slice(0, 8), 10)}${pad(challengerName.slice(0, 8), 10)}${pad("delta", 9)}${pad("cum", 9)}  chart`,
+    `${padEnd("sect", 6)}${pad("at", 8)}${pad(refName.slice(0, 8), 9)}${pad(challengerName.slice(0, 8), 9)}${pad("delta", 8)}${pad("cum", 8)}  chart`,
   );
-  for (const sector of comparison.sectors) {
+  for (const section of sections) {
     out.push(
-      padEnd(sector.sector, 8) +
-        pad(sector.toDistance, 7) +
-        pad(sector.referenceTime.toFixed(3), 10) +
-        pad(sector.challengerTime.toFixed(3), 10) +
-        pad(signed(sector.delta), 9) +
-        pad(signed(sector.cumulativeDelta), 9) +
-        "  " +
-        deltaBar(sector.delta, scale),
+      padEnd(section.section, 6) +
+        pad(`${section.referenceFromTime.toFixed(1)}s`, 8) +
+        pad(section.referenceTime.toFixed(3), 9) +
+        pad(section.challengerTime.toFixed(3), 9) +
+        pad(signed(section.delta), 8) +
+        pad(signed(section.cumulativeDelta), 8) +
+        (section.kind === "split" ? " ~" : "  ") +
+        deltaBar(section.delta, scale),
     );
   }
 
-  out.push("");
-  out.push(`Biggest losses for ${challengerName}:`);
-  for (const sector of comparison.worstSectors) {
-    out.push(
-      `  sector ${pad(sector.sector, 2)}  ${signed(sector.delta)}s   ` +
-        `${pad(sector.fromDistance, 6)}→${pad(sector.toDistance, 6)} units   ` +
-        `speed ${pad(sector.challengerSpeed, 4)} vs ${pad(sector.referenceSpeed, 4)} u/s`,
-    );
-  }
-  out.push("");
-  out.push(`Biggest gains for ${challengerName}:`);
-  for (const sector of comparison.bestSectors) {
-    out.push(
-      `  sector ${pad(sector.sector, 2)}  ${signed(sector.delta)}s   ` +
-        `${pad(sector.fromDistance, 6)}→${pad(sector.toDistance, 6)} units   ` +
-        `speed ${pad(sector.challengerSpeed, 4)} vs ${pad(sector.referenceSpeed, 4)} u/s`,
-    );
+  const place = (section) =>
+    `${pad(section.referenceFromTime.toFixed(1), 5)}→${pad(section.referenceToTime.toFixed(1), 5)}s on ${refName.slice(0, 8)}`;
+  const blame = (section) =>
+    blameOf(section) === "line"
+      ? `mostly a longer line (${signed(section.routeCost)}s)`
+      : `mostly less speed (${signed(section.speedCost)}s)`;
+
+  for (const [heading, ranked] of [
+    [`Biggest losses for ${challengerName}:`, comparison.worstSections],
+    [`Biggest gains for ${challengerName}:`, comparison.bestSections],
+  ]) {
+    out.push("");
+    out.push(heading);
+    for (const section of ranked) {
+      out.push(
+        `  section ${pad(section.section, 2)}  ${signed(section.delta)}s   ` +
+          `${place(section)}   ${blame(section)}`,
+      );
+    }
   }
 
   // --- side by side stats --------------------------------------------------

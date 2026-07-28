@@ -265,7 +265,7 @@ const commands = {
     const [referenceId, challengerId] = positional;
     if (!referenceId || !challengerId) {
       throw new Error(
-        "usage: kzreplay compare <reference_id> <challenger_id> [--sectors n] [--json out.json]",
+        "usage: kzreplay compare <reference_id> <challenger_id> [--seconds n] [--json out.json]",
       );
     }
 
@@ -295,7 +295,7 @@ const commands = {
     }
 
     const comparison = compareRuns(reference, challenger, {
-      sectorCount: Number(flags.sectors ?? 20),
+      minSeconds: Number(flags.seconds ?? 1.5),
     });
     console.log(renderComparison({ reference, challenger, comparison }));
 

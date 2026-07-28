@@ -1,4 +1,4 @@
-// The full analysis: one chart, and every number side by side.
+// The full analysis: one chart, the section table, and every number side by side.
 //
 // It used to be eight charts. Seven of them were interesting once and then never
 // looked at again, because only one of them answers the question you actually have —
@@ -6,45 +6,45 @@
 // gap along the course, at full width, and you can click anywhere on it to jump the
 // replay to that point.
 //
-// The shaded bands are still the biggest swings, red where time was lost and green
-// where it came back, because knowing where to click is most of the value.
+// Under it, the section table: the course cut at places both runs touched the ground,
+// with the time each run spent between them. The chart shows the shape of the gap,
+// the table says where it went in numbers that add up. The shaded bands are the worst
+// and best sections, because knowing where to click is most of the value.
 
+import { blameOf } from "../../src/sections.js";
 import { COLOURS, drawLines } from "./charts.js";
 import { formatDelta } from "./format.js";
 
 const plain = (value, digits = 2) => value.toFixed(digits);
 
-/** Loss moments, worst first. `moments` itself is in course order. */
-const byWorst = (insights) =>
-  [...insights.moments].sort((a, b) => b.secondsLost - a.secondsLost);
+/** The bigger half of a section's route/speed split, named and signed. */
+const mostly = (section) =>
+  blameOf(section) === "line"
+    ? `line ${formatDelta(section.routeCost)}`
+    : `speed ${formatDelta(section.speedCost)}`;
 
 /**
- * The biggest swings as shaded x ranges: red where time went, green where it came
+ * The biggest sections as shaded x ranges: red where time went, green where it came
  * back. Only the top few of each — shading a dozen bands over a short course leaves
  * the chart unreadable, which defeats the point of marking anything.
  */
-const swingBands = (insights, perSide = 3) => [
-  ...byWorst(insights)
-    .slice(0, perSide)
-    .map((moment) => ({
-      from: moment.fromDistance,
-      to: moment.toDistance,
-      colour: "rgba(251, 113, 133, 0.22)",
-    })),
-  ...[...insights.gains]
-    .sort((a, b) => a.secondsLost - b.secondsLost)
-    .slice(0, perSide)
-    .map((moment) => ({
-      from: moment.fromDistance,
-      to: moment.toDistance,
-      colour: "rgba(74, 222, 128, 0.18)",
-    })),
+const sectionBands = (insights) => [
+  ...insights.worst.map((section) => ({
+    from: section.fromDistance,
+    to: section.toDistance,
+    colour: "rgba(251, 113, 133, 0.22)",
+  })),
+  ...insights.best.map((section) => ({
+    from: section.fromDistance,
+    to: section.toDistance,
+    colour: "rgba(74, 222, 128, 0.18)",
+  })),
 ];
 
 const drawDelta = (canvas, insights, playhead) =>
   drawLines(canvas, {
     x: insights.traces.distance,
-    highlights: swingBands(insights),
+    highlights: sectionBands(insights),
     forceZero: true,
     playhead,
     padding: { top: 12, right: 12, bottom: 20, left: 52 },
@@ -136,6 +136,113 @@ export const createAnalysisPanel = ({
   let scale = null;
   let readout = null;
 
+  /**
+   * The section table: one row per stretch of course between two shared landings.
+   *
+   * Every row is clickable, because a number is only useful if you can go and watch
+   * the thing it is describing. A row hands the caller its start distance rather than
+   * a time, so the seek lands on that place on the course whichever run is on screen.
+   */
+  const buildSectionTable = () => {
+    const referenceName = insights.reference.meta.player?.name ?? "reference";
+    const challengerName =
+      insights.challenger.meta.player?.name ?? "challenger";
+    const onLanding = insights.sections.filter(
+      (section) => section.kind === "landing",
+    ).length;
+
+    const card = document.createElement("section");
+    card.className = "card card--wide";
+    const head = document.createElement("div");
+    head.className = "card__head";
+    const title = document.createElement("span");
+    title.className = "card__title";
+    title.textContent = "Section by section";
+    const hint = document.createElement("span");
+    hint.className = "card__hint";
+    // Count the sections, not the matched touchdowns: most touchdowns are too close
+    // together to be worth a row of their own, so quoting that number next to a
+    // shorter table just looks like an off-by-a-lot.
+    hint.textContent =
+      `${onLanding} of ${insights.sections.length} sections end where both runs ` +
+      "touched down · click a row to watch it";
+    head.append(title, hint);
+
+    const table = document.createElement("table");
+    table.className = "table table--rows";
+    const headRow = document.createElement("tr");
+    for (const [label, align, explain] of [
+      ["#", "", null],
+      // One clock has to own this column, and it is the reference's. Said out loud in
+      // the tooltip, because "at 25.1s" is a different moment in each run.
+      ["At", "", `where the section starts on ${referenceName}'s clock`],
+      [referenceName, "right", "seconds spent in the section"],
+      [challengerName, "right", "seconds spent in the section"],
+      ["Gap", "right", "the difference, positive means time lost"],
+      ["Total", "right", "the gap so far, adding up to the finishing gap"],
+      ["Mostly", "", "which of a longer line or less speed did the damage"],
+    ]) {
+      const cell = document.createElement("th");
+      cell.textContent = label;
+      if (align) cell.style.textAlign = align;
+      if (explain) cell.title = explain;
+      headRow.append(cell);
+    }
+    const thead = document.createElement("thead");
+    thead.append(headRow);
+    const body = document.createElement("tbody");
+
+    // Two ticks. Section times are exact tick counts, so anything smaller is a
+    // rounding difference nobody could feel, and the point of exact counts is being
+    // able to say that instead of dressing it up as a mistake.
+    const floor = 2 / insights.tickRate;
+
+    for (const section of insights.sections) {
+      const row = document.createElement("tr");
+      const notable = Math.abs(section.delta) >= floor;
+      const cells = [
+        [section.section, "", null],
+        [`${plain(section.referenceFromTime, 1)}s`, "", null],
+        [plain(section.referenceTime, 3), "right", null],
+        [plain(section.challengerTime, 3), "right", null],
+        // Only the gap columns get coloured: colouring the raw times would suggest
+        // one of them is wrong, and neither is.
+        [formatDelta(section.delta), "right", notable ? section.delta : null],
+        [
+          formatDelta(section.cumulativeDelta),
+          "right",
+          Math.abs(section.cumulativeDelta) >= floor
+            ? section.cumulativeDelta
+            : null,
+        ],
+        // Nothing to blame a difference on when there is no difference: below the
+        // floor both halves are rounding, and naming a winner between them tells a
+        // story about a tenth of a tick.
+        [notable ? mostly(section) : "—", "", null],
+      ];
+      for (const [value, align, signal] of cells) {
+        const cell = document.createElement("td");
+        cell.textContent = value;
+        if (align) cell.style.textAlign = align;
+        if (signal !== null) cell.className = signal > 0 ? "bad" : "good";
+        row.append(cell);
+      }
+      if (section.kind === "split") {
+        row.title =
+          "no shared landing in this stretch, so it was cut by distance instead";
+      }
+      row.addEventListener("click", () => {
+        onJumpDistance?.(section.fromDistance);
+        panel.close();
+      });
+      body.append(row);
+    }
+
+    table.append(thead, body);
+    card.append(head, table);
+    return card;
+  };
+
   const buildOverlay = () => {
     overlay.innerHTML = "";
     const reference = insights.reference.meta;
@@ -182,7 +289,7 @@ export const createAnalysisPanel = ({
 
     // Headline numbers. Sign convention throughout: positive is time the challenger
     // gave away.
-    const worst = byWorst(insights)[0];
+    const worst = insights.worst[0];
     const headline = document.createElement("div");
     headline.className = "analysis__headline";
     headline.innerHTML = [
@@ -190,10 +297,10 @@ export const createAnalysisPanel = ({
       ["From a longer line", formatDelta(insights.totals.route)],
       ["From less speed", formatDelta(insights.totals.speed)],
       [
-        "Worst single moment",
+        "Worst section",
         worst
           ? `${formatDelta(worst.secondsLost)} at ${plain(worst.referenceTime)}s`
-          : "—",
+          : "too close to call",
       ],
       ["Lines apart (median)", `${insights.line.medianDeviation.toFixed(0)} u`],
     ]
@@ -219,6 +326,8 @@ export const createAnalysisPanel = ({
     card.append(canvas, readout);
     overlay.append(card);
     wireCanvas();
+
+    overlay.append(buildSectionTable());
 
     const summary = document.createElement("section");
     summary.className = "card card--wide";

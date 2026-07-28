@@ -351,23 +351,30 @@ const showPlaying = (playing) => {
 };
 
 /**
- * Marks on the timeline, one per highlight, so the moments that decided the run are
- * visible and reachable without opening anything.
+ * Marks on the timeline, one per highlighted section, so the stretches that decided
+ * the run are visible and reachable without opening anything.
+ *
+ * A mark sits at the start of its section, which is a landing both runs made, so
+ * clicking it drops you in just before the stretch plays out rather than in the
+ * middle of it.
  */
 const renderScrubMarks = (data, duration) => {
   scrubMarks.innerHTML = "";
   if (!data || !duration) return;
 
-  for (const moment of data.swings) {
-    const momentTime =
-      selectedPov === "rival" ? moment.challengerTime : moment.referenceTime;
-    if (momentTime > duration) continue;
+  for (const section of data.highlights) {
+    const start =
+      selectedPov === "rival" ? section.challengerTime : section.referenceTime;
+    if (start > duration) continue;
     const mark = document.createElement("button");
     mark.type = "button";
-    mark.className = moment.secondsLost > 0 ? "is-loss" : "is-gain";
-    mark.style.left = `${(momentTime / duration) * 100}%`;
-    mark.title = `${momentTime.toFixed(2)}s · ${moment.secondsLost > 0 ? "lost" : "gained"} ${Math.abs(moment.secondsLost).toFixed(3)}s`;
-    mark.addEventListener("click", () => jumpTo(Math.max(0, momentTime - 0.6)));
+    mark.className = section.secondsLost > 0 ? "is-loss" : "is-gain";
+    mark.style.left = `${(start / duration) * 100}%`;
+    mark.title =
+      `${start.toFixed(2)}s · ` +
+      `${section.secondsLost > 0 ? "lost" : "gained"} ` +
+      `${Math.abs(section.secondsLost).toFixed(3)}s here · ${section.blame}`;
+    mark.addEventListener("click", () => jumpTo(Math.max(0, start - 0.6)));
     scrubMarks.append(mark);
   }
 };
