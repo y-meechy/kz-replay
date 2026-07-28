@@ -10,8 +10,8 @@ Of those three, the view counter (`/var/lib/kz-replay/state/views.json`) is the 
 one that cannot be rebuilt from the CS2KZ API. Back that file up; the rest is
 reproducible.
 
-The host nginx configuration for `preview-v2.kzcomp.com` already proxies to
-`localhost:8081`. Docker publishes that port on loopback only.
+The site is `demo.kzcomp.com`. The host nginx configuration proxies it to
+`localhost:8081`; Docker publishes that port on loopback only.
 
 ## Build and start
 
