@@ -56,8 +56,14 @@ const SKY_HORIZON = "#5d7898";
  *
  * Measured rather than eyeballed, against the numbers the scene lights alone were
  * tuned to. See sampleBrightness().
+ *
+ * Raised from 2.2 when the baked lighting started reaching textured maps. 2.2 was tuned
+ * on the build that had no textures, where the light was multiplied into a flat colour
+ * factor near white. It now multiplies the mapper's own texture instead, and a real
+ * surface reflects about a third of what falls on it, so the same number arrived about a
+ * third as bright.
  */
-const BAKED_LIGHT_GAIN = 2.2;
+const BAKED_LIGHT_GAIN = 3;
 
 /**
  * How much of the scene's own lighting is left on for a map that brought its own.
@@ -243,7 +249,13 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
   // Without tone mapping, several lights add up past 1.0 and every surface clips
   // to flat white, which looks like a paper cut-out instead of a room.
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.85;
+  // Measured with sampleBrightness() on kz_victoria in the follow view. 0.85 was set
+  // back when the baked lighting never reached a textured map at all, so a surface was
+  // lit only by the invented lights and the whole level read flat and much darker than
+  // the real one. With the mapper's own sun back, this puts the frame's mean luminance
+  // at 0.40 with 0.2% of it blown out and 0.1% near black — a daylight level with the
+  // highlights and the shadows both still readable. 1.4 starts clipping the sky.
+  renderer.toneMappingExposure = 1.15;
 
   const gpu = gpuName(renderer);
   if (isSoftwareRenderer(gpu)) {
@@ -291,7 +303,8 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
   const resolution = new THREE.Vector2(1, 1);
 
   // The whole route, dim, drawn up front so the shape of the course is visible
-  // before the run has travelled it.
+  // before the run has travelled it. Only worth having when the camera is riding
+  // with the player or when two runs are being compared — see showGuides().
   const routeOutline = new Line2(
     new LineGeometry().setPositions(points),
     new LineMaterial({
@@ -328,6 +341,18 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
   // No glow sprite: an untextured sprite is a flat square, which reads as a blue
   // box stuck to the player rather than a halo.
   scene.add(marker);
+
+  /**
+   * Whether to draw the two things that point at where the player is and is going:
+   * the white ball on them, and the dim outline of the route ahead.
+   *
+   * Both answer a question you only have while following: which of these lines am I
+   * on, and which way next. Watching from orbit, neither is a question — the whole
+   * course is on screen — and the pair are just clutter over the map, so they are off
+   * unless the camera is riding along or a second run is on screen to be told apart
+   * from the first.
+   */
+  const showGuides = () => cameraMode === "follow" || Boolean(rival);
 
   // --- the run being compared against --------------------------------------
   // A second run shown at the same time, on the same clock: both markers start
@@ -934,6 +959,8 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
     // Held at the finish rather than hidden, so you can see the gap open up.
     marker.material.opacity = playbackTime > durationOf(track) ? 0.35 : 1;
     marker.material.transparent = true;
+    marker.visible = showGuides();
+    routeOutline.visible = showGuides();
 
     let rivalIndex = null;
     if (rival) {
@@ -1072,10 +1099,11 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
         shareNearBlack: +(dark / count).toFixed(3),
       };
     },
-    /** Escape hatch for one-off alignment experiments from the console. */
+    /** Escape hatch for one-off alignment and lighting experiments from the console. */
     __internals: {
       THREE,
       scene,
+      renderer,
       mapGroup,
       track,
       positionAt,

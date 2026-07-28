@@ -359,7 +359,13 @@ export const trimMap = async ({
     }
   }
 
-  await document.transform(prune(), dedup());
+  // keepAttributes, because the lighting atlas's UV set is unused *inside the file* by
+  // design: the atlas ships beside the .glb, since glTF has no light map slot, and the
+  // viewer pairs the two at load time. Pruning decides an attribute nothing references
+  // is dead, and it was right about every other one — but this one it threw away on
+  // every map, so a textured map arrived with the mapper's own lighting stripped out and
+  // lit by the viewer's invented lights alone. Flat, and much darker than the real level.
+  await document.transform(prune({ keepAttributes: true }), dedup());
   await io.write(output, document);
 
   return {

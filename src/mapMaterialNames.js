@@ -30,7 +30,11 @@ const normalise = (name) => name.toLowerCase().replace(/[.]/g, "_");
  * no entry, and the caller falls back to the mesh name, which the exporter builds
  * from the model name and which is descriptive enough to colour.
  *
- * @returns Map of normalised mesh name -> material path
+ * @returns { byMesh, paths } — normalised mesh name -> material path, and the set of
+ *          every material path the world mentions. The set is wider than the map:
+ *          a mesh set built from several materials contributes all of them, and only
+ *          the first is what colours it. Callers that have to make those materials
+ *          loadable (see cs2Materials.js) want all of them.
  */
 export const readMaterialNames = async ({
   cli,
@@ -63,14 +67,16 @@ export const readMaterialNames = async ({
     files = await readdir(nodeDir);
   } catch {
     log("no world nodes were dumped, so every surface falls back to its name");
-    return new Map();
+    return { byMesh: new Map(), paths: new Set() };
   }
 
   const byMesh = new Map();
+  const paths = new Set();
   for (const file of files) {
     if (!file.endsWith(".dmx")) continue;
     const contents = await readFile(join(nodeDir, file), "latin1");
     const matches = [...new Set(contents.match(MATERIAL_PATH) ?? [])];
+    for (const path of matches) paths.add(path.toLowerCase());
     if (matches.length === 0) continue;
     // A mesh set can list more than one material when it was built from several.
     // The first is the one covering most of it, and a surface only gets one colour.
@@ -78,7 +84,7 @@ export const readMaterialNames = async ({
   }
 
   await rm(dumpDir, { recursive: true, force: true });
-  return byMesh;
+  return { byMesh, paths };
 };
 
 export const normaliseMeshName = normalise;
