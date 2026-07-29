@@ -49,42 +49,61 @@ const BIG_OUTPUT = { maxBuffer: 64 * 1024 * 1024 };
 const CT_MODEL = "agents/models/ctm_sas/ctm_sas.vmdl";
 
 /**
- * Which of the model's meshes to keep.
+ * Which of the model's meshes to keep: the body you see from outside, and nothing else.
  *
- * The other three are the first-person arms, the first-person sleeves and the defuse
- * kit. The arms are a floating pair of hands from any angle but the wearer's, and they
- * cost the two largest textures in the file.
+ * The other three are the defuse kit, which no KZ runner carries, and the model's own
+ * first-person arms and sleeves. Those look like the answer to what to draw when the camera
+ * is behind the runner's own eyes — they are skinned to the body's skeleton, so these same
+ * clips move them for free — and they are not. A locomotion clip poses a body seen from
+ * outside: the arms swing wide and the cut above the elbow is an open hole pointed straight
+ * at the camera. CS2 draws first person from a separate model of its own, and until this
+ * viewer does the same the body it has is the third-person one.
  */
 const CT_MESHES = ["thirdperson_body", "thirdperson_default_gloves"];
 
-/** Where the locomotion clips live. Shared by every player model in the game. */
-const CLIP_DIR = "animation/anims/world/rifle/_default_rifle";
+/**
+ * The two sets of locomotion clips, one per thing a runner can be holding.
+ *
+ * Both sets, not one: CS2 authors a whole locomotion set per weapon class and the arms are
+ * the difference. A pistol set holds the hands out in front of the chest; a knife set carries
+ * them low and to the side. CS2KZ gives you a USP in classic and a knife in vanilla, so which
+ * set a run wants is decided by its mode — see stanceForMode() in the viewer.
+ *
+ * Not the rifle set, which was where this started, because no KZ mode gives you a rifle and
+ * a body posed around one it is not carrying reads as a body holding nothing correctly.
+ */
+const CLIP_SETS = {
+  pistol: "animation/anims/world/pistol/_default_pistol",
+  knife: "animation/anims/world/knife/_default_knife",
+};
 
 /**
- * The clips the viewer's state machine can pick between, and nothing else.
+ * The eight states the viewer's state machine can pick between, and nothing else.
  *
- * The folder holds 194. Most are the eight compass directions of these same cycles, or
- * the ladder set, the turn-in-place set and the bomb-planting set: a replay carries no
- * strafe direction and no ladder flag, so none of those could ever be selected.
+ * Each folder holds about two hundred. Most are the eight compass directions of these same
+ * cycles, or the ladder set, the turn-in-place set and the bomb-planting set: a replay
+ * carries no strafe direction and no ladder flag, so none of those could ever be selected.
  *
- * The rifle set rather than the knife or pistol one because it is the fullest — every
- * one of idle, walk, run, crouch, jump and in-air is there, standing and ducked — and a
- * KZ player carries nothing, so the pose of the arms is a wash either way.
- *
- * Names are what the viewer looks up in the .glb, so character.js and this list have to
- * agree. Kept as the CS2 names rather than renamed to idle/walk/run: it is one less
- * mapping to hold in your head, and it says where they came from.
+ * Each is exported once per set and lands in the .glb under CS2's own full name —
+ * `run_n_pistol`, `run_n_knife` — which is what character.js looks up, so this list, the
+ * set names above and that lookup all have to agree.
  */
 export const CT_CLIPS = [
-  "idle_rifle",
-  "walk_n_rifle",
-  "run_n_rifle",
-  "idle_crouch_rifle",
-  "crouch_n_rifle",
-  "jump_stand_rifle",
-  "inair_stand_rifle",
-  "inair_crouch_stand_rifle",
+  "idle",
+  "walk_n",
+  "run_n",
+  "idle_crouch",
+  "crouch_n",
+  "jump_stand",
+  "inair_stand",
+  "inair_crouch_stand",
 ];
+
+/** Every clip to export: each state in each set, under the name CS2 gives it. */
+const allClips = () =>
+  Object.entries(CLIP_SETS).flatMap(([set, dir]) =>
+    CT_CLIPS.map((state) => ({ name: `${state}_${set}`, dir })),
+  );
 
 /**
  * The bone every clip drives to carry the character across the ground.
@@ -129,6 +148,7 @@ const externalRefs = async ({ cli, cs2Dir, path }) => {
 const borrowAssets = async ({ cs2Dir, toolsDir, cli, roots, log }) => {
   const seen = new Set();
   let frontier = roots;
+  let first = true;
   while (frontier.length) {
     const fresh = frontier.filter((path) => !seen.has(path));
     if (fresh.length === 0) break;
@@ -144,12 +164,22 @@ const borrowAssets = async ({ cs2Dir, toolsDir, cli, roots, log }) => {
       siblings: false,
       log,
     });
-    if (missing.length) {
+    // Only the models asked for have to exist. A reference that does not resolve deeper
+    // in is normal and not ours to care about: a compiled model lists the tooling data
+    // it was built from, and `weapon_pist_usp_silencer.vgcxdata` is in the USP's list and
+    // in no shipped archive. Failing on that would mean no weapons at all.
+    if (missing.length && first) {
       throw new Error(
-        `CS2 does not have ${missing.length} of the files the CT model needs, ` +
+        `CS2 does not have ${missing.length} of the models asked for, ` +
           `starting with ${missing[0]}`,
       );
     }
+    if (missing.length) {
+      log(
+        `CS2 ships no ${missing[0]}${missing.length > 1 ? ` (and ${missing.length - 1} more)` : ""}, which nothing drawn needs`,
+      );
+    }
+    first = false;
 
     const next = new Set();
     for (const path of fresh) {
@@ -223,8 +253,8 @@ const copyAnimation = ({ into, from, name, bones }) => {
   for (const channel of source.listChannels()) {
     const boneName = channel.getTargetNode()?.getName();
     if (boneName === ROOT_MOTION_BONE) continue;
-    const bone = bones.get(boneName);
-    if (!bone) continue;
+    const targets = bones.get(boneName);
+    if (!targets) continue;
 
     const sampler = channel.getSampler();
     const times = sampler.getInput();
@@ -249,14 +279,19 @@ const copyAnimation = ({ into, from, name, bones }) => {
       .setOutput(output)
       .setInterpolation(sampler.getInterpolation());
     animation.addSampler(copied);
-    animation.addChannel(
-      into
-        .createAnimationChannel()
-        .setTargetNode(bone)
-        .setTargetPath(channel.getTargetPath())
-        .setSampler(copied),
-    );
-    channels += 1;
+    // One sampler, a channel per target. A single skeleton means one target per name, but a
+    // file that ever holds two rigs would have the same bone name in each; glTF is happy for
+    // several channels to share a sampler, so the keyframes are stored once either way.
+    for (const bone of targets) {
+      animation.addChannel(
+        into
+          .createAnimationChannel()
+          .setTargetNode(bone)
+          .setTargetPath(channel.getTargetPath())
+          .setSampler(copied),
+      );
+      channels += 1;
+    }
   }
 
   if (channels === 0) animation.dispose();
@@ -282,15 +317,33 @@ const copyAnimation = ({ into, from, name, bones }) => {
 const alignRestPose = ({ from, bones }) => {
   let changed = 0;
   for (const source of from.getRoot().listNodes()) {
-    const bone = bones.get(source.getName());
-    if (!bone) continue;
-    bone
-      .setTranslation(source.getTranslation())
-      .setRotation(source.getRotation())
-      .setScale(source.getScale());
-    changed += 1;
+    for (const bone of bones.get(source.getName()) ?? []) {
+      bone
+        .setTranslation(source.getTranslation())
+        .setRotation(source.getRotation())
+        .setScale(source.getScale());
+      changed += 1;
+    }
   }
   return changed;
+};
+
+/**
+ * Every node in a document, by name.
+ *
+ * A list per name rather than one node. The body has one skeleton, so today every name is
+ * unique — but two rigs in one file both carry a `root_motion`, and keyed on one node the
+ * last one would win: the other would keep its own root frame and arrive rotated out of the
+ * scene. Cheap to be right about now rather than to debug later.
+ */
+const nodesByName = (document) => {
+  const found = new Map();
+  for (const node of document.getRoot().listNodes()) {
+    const name = node.getName();
+    if (!found.has(name)) found.set(name, []);
+    found.get(name).push(node);
+  }
+  return found;
 };
 
 /**
@@ -305,12 +358,7 @@ const mergeClips = async ({ modelGlb, clipGlbs, output, log }) => {
 
   for (const animation of model.getRoot().listAnimations()) animation.dispose();
 
-  const bones = new Map(
-    model
-      .getRoot()
-      .listNodes()
-      .map((node) => [node.getName(), node]),
-  );
+  const bones = nodesByName(model);
 
   const merged = [];
   let aligned = false;
@@ -466,7 +514,7 @@ export const convertPlayerModel = async ({
     cli,
     roots: [
       `${CT_MODEL}_c`,
-      ...CT_CLIPS.map((clip) => `${CLIP_DIR}/${clip}.vnmclip_c`),
+      ...allClips().map(({ name, dir }) => `${dir}/${name}.vnmclip_c`),
     ],
     log,
   });
@@ -494,16 +542,17 @@ export const convertPlayerModel = async ({
   });
 
   // 3. One glb per clip: a skeleton with no mesh, and the clip on it.
-  log(`exporting ${CT_CLIPS.length} locomotion clips…`);
+  const wanted = allClips();
+  log(`exporting ${wanted.length} locomotion clips…`);
   const clipDir = join(workDir, "clips");
   const clipGlbs = [];
-  for (const clip of CT_CLIPS) {
+  for (const { name, dir } of wanted) {
     clipGlbs.push([
-      clip,
+      name,
       await exportGlb({
         cli,
         cs2Dir,
-        path: `${CLIP_DIR}/${clip}.vnmclip`,
+        path: `${dir}/${name}.vnmclip`,
         dir: clipDir,
       }),
     ]);

@@ -68,11 +68,26 @@ const RUN_SPEED = 140;
  *
  * Ceilinged in update(), because a bhop at 600 would otherwise blur the legs.
  */
-const AUTHORED_SPEED = {
-  walk_n_rifle: 130,
-  run_n_rifle: 250,
-  crouch_n_rifle: 85,
-};
+const AUTHORED_SPEED = { walk_n: 130, run_n: 250, crouch_n: 85 };
+
+/**
+ * Which set of locomotion clips a run's mode calls for.
+ *
+ * CS2 authors a whole locomotion set per weapon class and the arms are what differ between
+ * them: a pistol set holds the hands out in front of the chest, a knife set carries them low
+ * and to the side. CS2KZ hands you a USP in classic and a knife in vanilla, so the mode is
+ * the whole of the answer.
+ *
+ * Deliberately a function of the mode and nothing else. It is a fact about the run, not about
+ * what the viewer has been asked to draw: a runner in vanilla stands like someone holding a
+ * knife whether or not anything is drawn in their hand.
+ *
+ * Lowercased, because the mode arrives from the replay header as the name a human reads —
+ * "Classic", capital C — rather than as the identifier the rest of the codebase uses. Anything
+ * unrecognised gets the knife, which is what CS2KZ's own default mode gives you.
+ */
+export const stanceForMode = (mode) =>
+  String(mode ?? "").toLowerCase() === "classic" ? "pistol" : "knife";
 
 /**
  * How much of the export's metalness and roughness to keep. See where they are applied.
@@ -107,17 +122,18 @@ const MAX_TIME_SCALE = 2.2;
  * in-air one, and the two are distinct enough that a jump reads as a jump. On the ground
  * it is duck state and speed. Nothing here needs the previous frame, which is what keeps
  * the whole state machine to one expression.
+ *
+ * Returns the state, not a clip name: the .glb holds each of these once per stance, and which
+ * stance a run uses is settled when the body is built rather than tick by tick.
  */
 const pickClip = ({ speed, ducking, onGround, verticalSpeed }) => {
   if (!onGround) {
-    if (ducking) return "inair_crouch_stand_rifle";
-    return verticalSpeed > 0 ? "jump_stand_rifle" : "inair_stand_rifle";
+    if (ducking) return "inair_crouch_stand";
+    return verticalSpeed > 0 ? "jump_stand" : "inair_stand";
   }
-  if (ducking) {
-    return speed < STILL_SPEED ? "idle_crouch_rifle" : "crouch_n_rifle";
-  }
-  if (speed < STILL_SPEED) return "idle_rifle";
-  return speed < RUN_SPEED ? "walk_n_rifle" : "run_n_rifle";
+  if (ducking) return speed < STILL_SPEED ? "idle_crouch" : "crouch_n";
+  if (speed < STILL_SPEED) return "idle";
+  return speed < RUN_SPEED ? "walk_n" : "run_n";
 };
 
 /** Fetch the character once. Null when `ct.glb` is not there — see loadGlb. */
@@ -130,10 +146,12 @@ export const loadCharacterAsset = (url = CHARACTER_URL) => loadGlb(url);
  * @param tint       a colour to multiply the skin by, or null for the real one. Used to
  *                   tell a rival's body from the main run's at a glance, the same way
  *                   their trail is already amber.
- * @returns { object, update, dispose } — `object` to add to the scene, `update` to be
+ * @param stance     which set of locomotion clips to pose with, from stanceForMode(). Fixed
+ *                   for the life of the body, because the mode of a run is.
+ * @returns { object, stance, update, dispose } — `object` to add to the scene, `update` to be
  *          called once a frame with the tick's facts.
  */
-export const createCharacter = ({ asset, tint = null }) => {
+export const createCharacter = ({ asset, tint = null, stance = "pistol" }) => {
   // Two nested nodes on purpose. The outer one carries the position and the yaw, which
   // are the only things the replay drives; the inner one holds the fixed corrections that
   // undo what the exporter did. Both rotations are about the same axis and would compose
@@ -210,6 +228,9 @@ export const createCharacter = ({ asset, tint = null }) => {
 
   return {
     object,
+    // Read back for the alignment checks in player.js's debug hooks, and so that what the
+    // body is posed as is answerable without inferring it from a clip name.
+    stance,
 
     /**
      * Put the body where the replay says it was, facing where it was looking, doing what
@@ -232,10 +253,10 @@ export const createCharacter = ({ asset, tint = null }) => {
       object.position.copy(position);
       object.rotation.y = yaw;
 
-      const name = pickClip({ speed, ducking, onGround, verticalSpeed });
-      play(name);
+      const state = pickClip({ speed, ducking, onGround, verticalSpeed });
+      play(`${state}_${stance}`);
 
-      const authored = AUTHORED_SPEED[name];
+      const authored = AUTHORED_SPEED[state];
       if (current) {
         current.timeScale = authored
           ? THREE.MathUtils.clamp(
