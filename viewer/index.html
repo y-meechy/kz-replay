@@ -18,9 +18,17 @@
     <div class="watch" id="watch" hidden>
       <canvas id="stage"></canvas>
       <div class="active-pov" id="active-pov" hidden>POV · —</div>
-      <!-- How many people have watched this run. Hidden until there is a number,
-           because "— views" says nothing. -->
-      <div class="watch-views" id="watch-views" hidden></div>
+
+      <!-- Who this is, and what the run cost. Always on screen: a replay with no
+           name on it is a coloured line moving through a room. -->
+      <div class="watch-ident">
+        <div class="watch-ident__name" id="watch-runner">—</div>
+        <!-- TP runs only: the run's time with the failed attempts taken out. -->
+        <div class="watch-ident__notp" id="watch-notp" hidden></div>
+        <!-- How many people have watched this run. Hidden until there is a number,
+             because "— views" says nothing. -->
+        <div class="watch-views" id="watch-views" hidden></div>
+      </div>
       <button
         id="stats-toggle"
         class="button stats-toggle"
@@ -64,6 +72,15 @@
           <input type="checkbox" id="map-toggle" disabled />
           <span>Map geometry</span>
           <span class="toggle__status" id="map-status">—</span>
+        </label>
+
+        <!-- Only ever shown on a run that teleported back to a checkpoint at least
+             once. On a pro run there is nothing to skip, so the row is not there to
+             be read past. -->
+        <label class="toggle" id="skip-tp-row" hidden>
+          <input type="checkbox" id="skip-tp" />
+          <span>Skip teleports</span>
+          <span class="toggle__status" id="skip-tp-status">—</span>
         </label>
 
         <!-- The same switch as the MHUD button in the controls row, for the narrow

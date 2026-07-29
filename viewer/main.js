@@ -148,6 +148,11 @@ const statSpeed = el("stat-speed");
 const statTeleports = el("stat-teleports");
 const mapToggle = el("map-toggle");
 const mapStatus = el("map-status");
+const skipTpRow = el("skip-tp-row");
+const skipTpToggle = el("skip-tp");
+const skipTpStatus = el("skip-tp-status");
+const watchRunner = el("watch-runner");
+const watchNotp = el("watch-notp");
 const compareLive = el("compare-live");
 const compareError = el("compare-error");
 const watchNotice = el("watch-notice");
@@ -207,6 +212,21 @@ const showWatchViews = (count) => {
   watchViews.textContent = viewsLabel(count);
   watchViews.hidden = false;
 };
+
+/**
+ * Whether anyone can actually see the stats panel.
+ *
+ * It is a sheet you open on a phone and a permanent column on a desktop, so "is it
+ * open" only answers the question at one of the two widths — and on a desktop the
+ * answer was always no, because the button that opens it is not even on screen
+ * there. The numbers inside it sat at 0.00 for the whole run.
+ *
+ * Watched as a media query rather than measured off the panel, because updateHud()
+ * runs on every rendered frame and reading an element's box makes the browser redo
+ * the page layout to answer.
+ */
+const narrowLayout = window.matchMedia("(max-width: 900px)");
+const statsVisible = () => statsOpen || !narrowLayout.matches;
 
 const setStatsOpen = (open) => {
   statsOpen = open;
@@ -420,9 +440,9 @@ const updateCompareReadout = (frame) => {
 };
 
 const updateHud = (frame) => {
-  // The stats panel is collapsed most of the time. Nothing needs writing into a
-  // panel nobody can see, and the next frame fills it in the moment it opens.
-  if (statsOpen) {
+  // Nothing needs writing into a panel nobody can see, and the next frame fills it
+  // in the moment it opens.
+  if (statsVisible()) {
     setText(statTime, `${frame.time.toFixed(2)}s`);
     setText(statSpeed, `${frame.speed} u/s`);
     setText(statTeleports, `${frame.teleports} / ${frame.totalTeleports}`);
@@ -437,6 +457,45 @@ const updateHud = (frame) => {
   mhud.update(frame);
   updateCompareReadout(frame);
   viewTicker?.frame(frame);
+};
+
+// --- teleports --------------------------------------------------------------
+
+/** What the run is officially timed at, which is what the controls count up to. */
+const reportedDuration = () =>
+  activeMeta?.reportedTime ?? activeTrack?.durationSeconds ?? 0;
+
+/**
+ * The teleport readouts for the run on screen.
+ *
+ * A pro run gets none of this: no chip over the run, no switch in the panel, because
+ * there is nothing a teleport cost it. A TP run always shows its time without them,
+ * since that is the number people actually argue about, and the switch to watch it
+ * that way sits under the map toggle with the rest of the view options.
+ *
+ * Nothing while a rival is loaded. A comparison puts both runs on one clock and
+ * measures them against a shared distance axis, and a run playing on a clock of its
+ * own would make every number in that panel a lie.
+ */
+const showTeleportTools = () => {
+  const cost = player?.teleportCost;
+  const trimmed = Boolean(cost?.attempts) && !activeRivalRun;
+
+  watchNotp.hidden = !trimmed;
+  skipTpRow.hidden = !trimmed;
+  if (!trimmed) {
+    skipTpToggle.checked = false;
+    player?.setSkipTeleports(false);
+    return;
+  }
+
+  watchNotp.textContent = `no TP · ${formatRunTime(cost.cleanDuration)}`;
+  skipTpStatus.textContent = formatRunTime(cost.cleanDuration);
+  const skipping = player.setSkipTeleports(skipTpToggle.checked);
+  skipTpToggle.checked = skipping;
+  total.textContent = (
+    skipping ? cost.cleanDuration : reportedDuration()
+  ).toFixed(2);
 };
 
 // --- map geometry -----------------------------------------------------------
@@ -499,6 +558,9 @@ const selectPov = (next, { persist = false } = {}) => {
       ? (meta?.player?.name ?? "rival")
       : (meta?.player?.name ?? "this run");
   activePov.textContent = `POV · ${name}`;
+  // The name chip follows the POV: it says who you are watching, not who the link
+  // opened on.
+  watchRunner.textContent = meta?.player?.name ?? "unknown runner";
   total.textContent = (
     meta?.reportedTime ??
     run?.track.durationSeconds ??
@@ -548,6 +610,7 @@ const clearRival = () => {
   watchCompare.hidden = false;
   analysisPanel.setInsights(null);
   renderScrubMarks(null, 0);
+  showTeleportTools();
 };
 
 const loadRival = async (recordId, token, initialPov = "rival") => {
@@ -588,6 +651,8 @@ const loadRival = async (recordId, token, initialPov = "rival") => {
   analysisPanel.setInsights(insights);
   legendYou.textContent = `${activeMeta.player?.name ?? "this run"} · ${formatRunTime(activeMeta.reportedTime ?? 0)}`;
   legendRival.textContent = `${rival.meta.player?.name ?? "rival"} · ${formatRunTime(rival.meta.reportedTime ?? 0)}`;
+  // Before selectPov, which owns the clock readout once two runs share it.
+  showTeleportTools();
   selectPov(initialPov);
 };
 
@@ -655,8 +720,20 @@ const openRun = async (
       canvas: stage,
       track: run.track,
       onFrame: updateHud,
+      // The full player is where a run gets picked apart, so this is where a TP
+      // run's failed attempts come off the line. The WR feed leaves them on.
+      //
+      // Gated on the record's own teleport count rather than on the track's,
+      // because a pro run's recording can still hold a teleport: the window kept
+      // around the run sometimes reaches back into a warm-up attempt that ended in
+      // one, and rubbing a stretch out of a pro line would be simply wrong.
+      trimTeleports: (run.meta.teleports ?? 0) > 0,
     });
     if (import.meta.env.DEV) window.__kzPlayer = player;
+
+    watchRunner.textContent = run.meta.player?.name ?? "unknown runner";
+    skipTpToggle.checked = false;
+    showTeleportTools();
 
     // The count is for the run the link opened, which is the one the timeline and the
     // clock belong to as well.
@@ -789,38 +866,50 @@ mapToggle.addEventListener("change", (event) => {
   player?.setMapVisible(event.target.checked);
 });
 
+skipTpToggle.addEventListener("change", () => showTeleportTools());
+
 /**
  * Ask the dev server to download and convert the current map, then load it.
  *
- * Dev only. The work needs steamcmd and the Valve resource tools, and on a deployed
- * server the nightly refresh does it instead.
+ * Dev only, and dev only in a way that survives a build. The work needs steamcmd and
+ * the Valve resource tools, and the endpoint it posts to is a middleware of the vite
+ * dev server (viewer/convertMapPlugin.js) that a deployed site does not run at all —
+ * so on a live site the button is not something to hide, it is something that has no
+ * business existing. `import.meta.env.DEV` is a constant at build time, so the whole
+ * branch below, its handler and the endpoint's address are dropped from the bundle,
+ * and the element goes out of the page with them. On a deployed site the nightly
+ * refresh converts maps instead.
  */
-mapConvert.addEventListener("click", async () => {
-  const name = mapConvert.dataset.map;
-  if (!name) return;
+if (import.meta.env.DEV) {
+  mapConvert.addEventListener("click", async () => {
+    const name = mapConvert.dataset.map;
+    if (!name) return;
 
-  mapConvert.disabled = true;
-  mapConvert.textContent = "Converting…";
-  mapStatus.textContent = "downloading the map, this takes a minute";
+    mapConvert.disabled = true;
+    mapConvert.textContent = "Converting…";
+    mapStatus.textContent = "downloading the map, this takes a minute";
 
-  try {
-    const response = await fetch(
-      `/api/convert-map?name=${encodeURIComponent(name)}`,
-      { method: "POST" },
-    );
-    const result = await response.json();
-    if (!response.ok) {
-      throw new Error(result.error ?? `failed with ${response.status}`);
+    try {
+      const response = await fetch(
+        `/api/convert-map?name=${encodeURIComponent(name)}`,
+        { method: "POST" },
+      );
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.error ?? `failed with ${response.status}`);
+      }
+      mapConvert.hidden = true;
+      mapStatus.textContent = `converted, ${result.megabytes} MB — loading`;
+      await loadMapFor(activeMeta, loadToken);
+    } catch (error) {
+      mapStatus.textContent = `conversion failed: ${error.message}`;
+      mapConvert.disabled = false;
+      mapConvert.textContent = "Try again";
     }
-    mapConvert.hidden = true;
-    mapStatus.textContent = `converted, ${result.megabytes} MB — loading`;
-    await loadMapFor(activeMeta, loadToken);
-  } catch (error) {
-    mapStatus.textContent = `conversion failed: ${error.message}`;
-    mapConvert.disabled = false;
-    mapConvert.textContent = "Try again";
-  }
-});
+  });
+} else {
+  mapConvert.remove();
+}
 
 window.addEventListener("keydown", (event) => {
   if (!player || watchRoot.hidden) return;
