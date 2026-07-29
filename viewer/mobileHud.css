@@ -1,0 +1,110 @@
+/* Full-player-only mobile chrome. The WR feed never uses these classes. */
+
+.replay-crosshair {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 3;
+  width: 18px;
+  height: 18px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.replay-crosshair.is-visible {
+  opacity: 1;
+}
+
+.replay-crosshair i {
+  position: absolute;
+  display: block;
+  background: #52ff52;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.85),
+    0 0 2px rgba(0, 0, 0, 0.9);
+}
+
+.replay-crosshair__top,
+.replay-crosshair__bottom {
+  left: 50%;
+  width: 2px;
+  height: 5px;
+  transform: translateX(-50%);
+}
+
+.replay-crosshair__left,
+.replay-crosshair__right {
+  top: 50%;
+  width: 5px;
+  height: 2px;
+  transform: translateY(-50%);
+}
+
+.replay-crosshair__top {
+  top: 0;
+}
+
+.replay-crosshair__right {
+  right: 0;
+}
+
+.replay-crosshair__bottom {
+  bottom: 0;
+}
+
+.replay-crosshair__left {
+  left: 0;
+}
+
+@media (max-width: 900px) {
+  /* A tap on the canvas leaves only the runner, MHUD, replay clock and optional
+     crosshair. Another tap restores the full player chrome. */
+  .watch.is-minimal-hud .stats-toggle,
+  .watch.is-minimal-hud .panel--stats,
+  .watch.is-minimal-hud .active-pov,
+  .watch.is-minimal-hud .watch-ident__notp,
+  .watch.is-minimal-hud .watch-views {
+    display: none !important;
+  }
+
+  .watch.is-minimal-hud .controls {
+    right: 10px;
+    bottom: calc(10px + env(safe-area-inset-bottom));
+    left: auto;
+    display: block;
+    width: auto;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    backdrop-filter: none;
+    pointer-events: none;
+  }
+
+  .watch.is-minimal-hud .controls > :not(.controls__time) {
+    display: none !important;
+  }
+
+  .watch.is-minimal-hud .controls__time {
+    display: block;
+    padding: 5px 8px;
+    border: 1px solid var(--edge);
+    border-radius: 8px;
+    background: var(--panel);
+    color: var(--text);
+    font-size: 11px;
+    backdrop-filter: blur(10px);
+  }
+
+  .watch.is-minimal-hud .watch-ident {
+    top: calc(10px + env(safe-area-inset-top));
+    bottom: auto;
+    left: 10px;
+    max-width: calc(100% - 20px);
+  }
+
+  .watch.is-minimal-hud .mhud {
+    bottom: calc(14px + env(safe-area-inset-bottom));
+  }
+}
