@@ -84,7 +84,7 @@ export const wastedRanges = (track) => {
       }
     }
 
-    if (from < tick) ranges.push({ from, to: tick });
+    ranges.push({ from, to: tick });
     attemptStart = tick;
   }
 
@@ -132,6 +132,8 @@ export const analyseTeleports = (track, ranges = wastedRanges(track)) => {
     keptBefore[s] = kept;
     if (rangeOfSegment[s] < 0) keptSegments[kept++] = s;
   }
+  // One more tick than there are segments: the last one has all the survivors
+  // behind it, which is the clean route's full length.
   keptBefore[segments] = kept;
 
   return {
