@@ -746,7 +746,10 @@ body {
    is one row on a desktop and two on a phone. The room it takes is measured and
    written to --controls-space by main.js, so this never has to guess. */
 .mhud {
-  position: absolute;
+  /* Fixed rather than absolute, so left: 50% is half the viewport and not half
+     of whatever the HUD happens to sit inside. The runner's eye is on the middle
+     of the screen and the HUD has to be under it exactly. */
+  position: fixed;
   left: 50%;
   bottom: calc(var(--controls-space, 78px) + 12px);
   z-index: 3;
@@ -765,10 +768,13 @@ body {
   display: none;
 }
 
+/* Speed on top, keys underneath, rather than side by side: the reading order of
+   the in-game HUD, and it keeps both of them on the screen's centre line instead
+   of hanging each one off to a side of it. */
 .mhud__live {
-  display: flex;
-  align-items: center;
-  gap: 16px;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
 }
 
 /* Twice the size of the phone layout at the bottom of this file, which is where
@@ -822,9 +828,9 @@ body {
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  /* Four digits of speed must not shift the keys next to it every tick. */
+  /* Four digits of speed must not shift the block under it every tick. */
   min-width: 4ch;
-  text-align: right;
+  text-align: center;
 }
 
 .mhud__speed-unit {
@@ -1285,7 +1291,7 @@ body {
   /* Every pixel the HUD gives back is a pixel of the run, and a phone held
      sideways has very few of them to spare. */
   .mhud__live {
-    gap: 9px;
+    gap: 1px;
   }
 
   .mhud__keys {
