@@ -838,6 +838,25 @@ body {
   color: var(--muted);
 }
 
+/* Empty until the runner's first jump, and it keeps its line either way so the
+   keys do not jump up the screen when it appears. */
+.mhud__prespeed {
+  min-height: 15px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+/* A perf is the thing a bhop run is made of, so it says so: both the speed and
+   the prespeed it was taken with turn green until the next jump. */
+.mhud__live.is-perf .mhud__speed-value,
+.mhud__live.is-perf .mhud__prespeed {
+  color: var(--ok);
+}
+
 /* --- controls ------------------------------------------------------------- */
 
 .controls {
@@ -1313,6 +1332,11 @@ body {
 
   .mhud__speed-value {
     font-size: 22px;
+  }
+
+  .mhud__prespeed {
+    min-height: 11px;
+    font-size: 11px;
   }
 
   .toggle--narrow-only {
