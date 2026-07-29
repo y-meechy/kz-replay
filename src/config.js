@@ -26,6 +26,17 @@ export const MAPS_DIR = fromEnv(
   join(REPO_ROOT, "viewer", "public", "maps"),
 );
 
+/**
+ * The player character, as `ct.glb`. One file for every map and every run.
+ *
+ * Its own directory rather than a file in MAPS_DIR: a map is fetched per run and this is
+ * fetched once for the whole site, and in production the two are mounted separately.
+ */
+export const MODELS_DIR = fromEnv(
+  "KZ_MODELS_DIR",
+  join(REPO_ROOT, "viewer", "public", "models"),
+);
+
 /** steamcmd's download area and the Source 2 exporter. Never served. */
 export const TOOLS_DIR = fromEnv("KZ_TOOLS_DIR", join(REPO_ROOT, "tools"));
 

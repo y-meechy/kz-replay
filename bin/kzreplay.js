@@ -5,6 +5,7 @@
 //   kzreplay wrs [--mode m] [--limit n]  fetch the current world records
 //   kzreplay wrfeed [--limit n]          rebuild the WR feed the /wr page scrolls
 //   kzreplay map <map_name>              convert a workshop map to .glb
+//   kzreplay player-model                borrow the CT character out of CS2
 //   kzreplay compare <a> <b>             full stats for two runs, and the time delta
 //   kzreplay inspect <file|record_id>    dump the header and section table
 //   kzreplay verify [--limit n]          parse many replays, report desyncs
@@ -18,9 +19,16 @@ import { fileURLToPath } from "node:url";
 import { parseReplay, replayToTrack } from "../src/index.js";
 import { fetchMap, fetchReplay, fetchWorldRecords } from "../src/api.js";
 import { buildLatestWorldRecords } from "../src/catalog.js";
-import { MAPS_DIR, MAPS_JSON, TOOLS_DIR, WRS_JSON } from "../src/config.js";
+import {
+  MAPS_DIR,
+  MAPS_JSON,
+  MODELS_DIR,
+  TOOLS_DIR,
+  WRS_JSON,
+} from "../src/config.js";
 import { writeJsonAtomically } from "../src/geometry.js";
 import { convertMap } from "../src/mapPipeline.js";
+import { convertPlayerModel } from "../src/playerModelPipeline.js";
 import { analyseRun } from "../src/analysis.js";
 import { compareRuns } from "../src/compare.js";
 import { renderComparison } from "../src/report.js";
@@ -257,6 +265,29 @@ const commands = {
     const { size } = await stat(path);
     console.log(`\nwrote ${path} (${(size / 1e6).toFixed(1)} MB)`);
     console.log("Credit the mappers wherever this geometry is shown.");
+  },
+
+  /**
+   * The CT character the viewer draws the run with.
+   *
+   * Run once, not per map: one file covers every replay. The viewer falls back to its
+   * old white ball if the file is not there, so this is optional.
+   */
+  async ["player-model"]({ flags }) {
+    const { path, size, clips } = await convertPlayerModel({
+      toolsDir: TOOLS_DIR,
+      outputDir: MODELS_DIR,
+      ...(flags["texture-size"]
+        ? { textureSize: Number(flags["texture-size"]) }
+        : {}),
+      // --keep-work leaves the raw export in place, which is how you look at what the
+      // exporter actually produced when the character comes out wrong.
+      cleanup: !flags["keep-work"],
+      log: (message) => console.log(`  ${message}`),
+    });
+
+    console.log(`\nwrote ${path} (${(size / 1e6).toFixed(1)} MB)`);
+    console.log(`clips: ${clips.join(", ")}`);
   },
 
   /**
