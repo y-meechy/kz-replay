@@ -260,7 +260,7 @@ const copyAnimation = ({ into, from, name, bones }) => {
  * matrices are unchanged, so the body turns with its bones instead of tearing. The viewer
  * undoes the leftover quarter turn, which it already does for maps. See vrfExport.js.
  */
-const alignRestPose = ({ into, from, bones }) => {
+const alignRestPose = ({ from, bones }) => {
   let changed = 0;
   for (const source of from.getRoot().listNodes()) {
     const bone = bones.get(source.getName());
@@ -300,7 +300,7 @@ const mergeClips = async ({ modelGlb, clipGlbs, output, log }) => {
     // Once, off the first clip. Every clip in the folder is exported against the same
     // skeleton, so they all agree with each other and only one has to be asked.
     if (!aligned) {
-      log(`aligned ${alignRestPose({ into: model, from: clip, bones })} bones`);
+      log(`aligned ${alignRestPose({ from: clip, bones })} bones`);
       aligned = true;
     }
     const channels = copyAnimation({
@@ -350,6 +350,42 @@ const optimizerArgs = (input, output, textureSize) => [
 ];
 
 /**
+ * Put a finished .glb in place under the name the viewer fetches it by.
+ *
+ * Through a dot-prefixed temporary and a rename, and validated before the rename, so that
+ * a half-written or broken file is never what a browser asks for: the viewer's models
+ * directory is a live served folder, not a build output.
+ *
+ * @returns { path, size }
+ */
+const publishGlb = async ({ from, outputDir, name }) => {
+  const final = join(outputDir, `${name}.glb`);
+  const temporary = join(outputDir, `.${name}.tmp.glb`);
+  await copyFile(from, temporary);
+  await validateGlb(temporary);
+  await rename(temporary, final);
+  const { size } = await stat(final);
+  return { path: final, size };
+};
+
+/** The two tools every conversion in here needs, and where to get them. */
+const requireTools = (toolsDir) => {
+  const cli = join(toolsDir, "Source2Viewer-CLI");
+  if (!existsSync(cli)) {
+    throw new Error(
+      `Source2Viewer-CLI not found at ${cli}. Download the CLI archive for this ` +
+        `platform from the ValveResourceFormat releases into tools/.`,
+    );
+  }
+  if (!existsSync(GLTF_TRANSFORM)) {
+    throw new Error(
+      `gltf-transform not found at ${GLTF_TRANSFORM}. Run npm install first.`,
+    );
+  }
+  return cli;
+};
+
+/**
  * Borrow the CT model out of CS2 and write `ct.glb` for the viewer.
  *
  * @param outputDir where `ct.glb` lands; viewer/public/models in development
@@ -367,18 +403,7 @@ export const convertPlayerModel = async ({
   cleanup = true,
   log = () => {},
 }) => {
-  const cli = join(toolsDir, "Source2Viewer-CLI");
-  if (!existsSync(cli)) {
-    throw new Error(
-      `Source2Viewer-CLI not found at ${cli}. Download the CLI archive for this ` +
-        `platform from the ValveResourceFormat releases into tools/.`,
-    );
-  }
-  if (!existsSync(GLTF_TRANSFORM)) {
-    throw new Error(
-      `gltf-transform not found at ${GLTF_TRANSFORM}. Run npm install first.`,
-    );
-  }
+  const cli = requireTools(toolsDir);
 
   await mkdir(outputDir, { recursive: true });
   await syncCs2Index({ cs2Dir, toolsDir, log });
@@ -462,15 +487,13 @@ export const convertPlayerModel = async ({
     BIG_OUTPUT,
   );
 
-  const final = join(outputDir, "ct.glb");
-  const temporary = join(outputDir, ".ct.tmp.glb");
-  await copyFile(existsSync(packed) ? packed : mergedGlb, temporary);
-  await validateGlb(temporary);
-  await rename(temporary, final);
-
-  const { size } = await stat(final);
-  log(`wrote ${final} at ${(size / 1e6).toFixed(1)} MB`);
+  const { path, size } = await publishGlb({
+    from: existsSync(packed) ? packed : mergedGlb,
+    outputDir,
+    name: "ct",
+  });
+  log(`wrote ${path} at ${(size / 1e6).toFixed(1)} MB`);
   if (cleanup) await rm(workDir, { recursive: true, force: true });
 
-  return { path: final, size, clips };
+  return { path, size, clips };
 };
