@@ -1678,22 +1678,56 @@ body {
   white-space: nowrap;
 }
 
-/* --- view counts ---------------------------------------------------------- */
+/* --- who is running, and what it cost -------------------------------------
+   A stack of small chips in the top corner: the runner's name, the run's time
+   without its teleports, and how many people have watched it. One absolutely
+   positioned box holding all three, so the phone layout only has to move one
+   thing and the chips keep their order however many of them are showing. */
 
-.watch-views {
+.watch-ident {
   position: absolute;
   top: 18px;
   left: 18px;
   z-index: 4;
+  display: grid;
+  justify-items: start;
+  gap: 5px;
+  /* Room for the stats panel on the right and the POV chip in the middle. */
+  max-width: min(300px, calc(100% - 330px));
+}
+
+.watch-ident__name,
+.watch-ident__notp,
+.watch-views {
+  max-width: 100%;
+  overflow: hidden;
   padding: 6px 11px;
   border: 1px solid var(--edge);
   border-radius: 9px;
   background: var(--panel);
-  color: var(--muted);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   backdrop-filter: blur(12px);
+}
+
+/* The one line on screen that is not a number. */
+.watch-ident__name {
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.watch-ident__notp {
+  border-color: rgba(74, 222, 128, 0.35);
+  color: var(--ok);
+  font-variant-numeric: tabular-nums;
+}
+
+.watch-views {
+  color: var(--muted);
 }
 
 .sheet__views {
@@ -1723,11 +1757,12 @@ body {
   }
 
   /* Top left is the compare readout on a phone, and top right is the stats
-     button, so the count moves down to the free corner above the controls. */
-  .watch-views {
+     button, so the chips move down to the free corner above the controls. */
+  .watch-ident {
     top: auto;
     bottom: calc(var(--controls-space, 78px) + 12px);
     left: 10px;
+    max-width: calc(100% - 20px);
   }
 }
 

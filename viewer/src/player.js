@@ -9,7 +9,10 @@ import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 import { Line2 } from "three/addons/lines/Line2.js";
 import { LineGeometry } from "three/addons/lines/LineGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
+import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
+import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { TRACK_FLAG } from "../../src/track.js";
+import { analyseTeleports, rangesReachedBy } from "../../src/teleports.js";
 
 // Source is Z-up and we render Y-up.
 const toWorld = (x, y, z) => [x, z, -y];
@@ -227,11 +230,21 @@ const isSoftwareRenderer = (name) =>
   /swiftshader|software|llvmpipe|basic render/i.test(name ?? "");
 
 /**
- * @param canvas    the canvas to render into
- * @param track     decoded .kztrack (see src/track.js)
- * @param onFrame   called every rendered frame with live readouts for the HUD
+ * @param canvas          the canvas to render into
+ * @param track           decoded .kztrack (see src/track.js)
+ * @param onFrame         called every rendered frame with live readouts for the HUD
+ * @param trimTeleports   on a TP run, rub out each failed attempt the moment the
+ *                        runner teleports out of it, and allow skipping them
+ *                        altogether. Off by default: the WR feed plays one run after
+ *                        another with no controls at all, and a line quietly
+ *                        vanishing there is a glitch rather than a feature.
  */
-export const createPlayer = ({ canvas, track, onFrame }) => {
+export const createPlayer = ({
+  canvas,
+  track,
+  onFrame,
+  trimTeleports = false,
+}) => {
   const renderer = new THREE.WebGLRenderer({
     canvas,
     antialias: true,
@@ -302,11 +315,101 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
 
   const resolution = new THREE.Vector2(1, 1);
 
+  // --- the failed attempts of a TP run ------------------------------------
+  // Which stretches of the path the runner threw away, and the clean route left when
+  // they are gone. A run with no teleports has none of either, and neither does a
+  // player that was told not to trim: the trail is then drawn and timed exactly as
+  // the recording has it, which is every code path below doing nothing.
+  // See src/teleports.js.
+  const teleports = analyseTeleports(track, trimTeleports ? undefined : []);
+  const wasted = teleports.ranges;
+  const cleanRoute = teleports.keptSegments;
+  const segmentCount = track.count - 1;
+
+  /**
+   * The trail, as a list of segments rather than as one polyline.
+   *
+   * Drawn from explicit pairs of endpoints, which is what makes a failed attempt
+   * removable at all: a polyline can only be revealed from one end, by segment
+   * count, so there is no way to take a stretch out of the middle of one. With pairs
+   * the surviving segments can be packed towards the front of the buffer and the
+   * same segment count then reveals the run as it goes, having never held the erased
+   * stretches in the first place. Same memory either way — LineGeometry expands a
+   * polyline into exactly these pairs internally.
+   */
+  const segmentPositions = new Float32Array(segmentCount * 6);
+  const segmentColors = new Float32Array(segmentCount * 6);
+
+  const drawSegment = (segment, slot) => {
+    const target = slot * 6;
+    const start = segment * 3;
+    for (let axis = 0; axis < 3; axis++) {
+      segmentPositions[target + axis] = points[start + axis];
+      segmentPositions[target + 3 + axis] = points[start + 3 + axis];
+      segmentColors[target + axis] = colors[start + axis];
+      segmentColors[target + 3 + axis] = colors[start + 3 + axis];
+    }
+  };
+
+  for (let segment = 0; segment < segmentCount; segment++) {
+    drawSegment(segment, segment);
+  }
+
+  const trailGeometry = new LineSegmentsGeometry();
+  trailGeometry.setPositions(segmentPositions);
+  trailGeometry.setColors(segmentColors);
+  const trail = new LineSegments2(
+    trailGeometry,
+    new LineMaterial({
+      linewidth: 3.4,
+      vertexColors: true,
+      resolution,
+      dashed: false,
+    }),
+  );
+  scene.add(trail);
+
+  /**
+   * Rub out the failed attempts the runner has already teleported out of.
+   *
+   * Rewrites the segment buffer in place rather than rebuilding the geometry: a
+   * fresh buffer per teleport would leave the old one on the graphics card, and a
+   * long TP run teleports a hundred times.
+   *
+   * Only the count matters, because the wasted stretches are erased in order — the
+   * runner cannot teleport out of the fourth one before the third.
+   */
+  let erasedRanges = 0;
+  const eraseThrough = (count) => {
+    if (erasedRanges === count) return;
+    erasedRanges = count;
+    let slot = 0;
+    for (let segment = 0; segment < segmentCount; segment++) {
+      const range = teleports.rangeOfSegment[segment];
+      if (range >= 0 && range < count) continue;
+      drawSegment(segment, slot++);
+    }
+    trailGeometry.attributes.instanceStart.data.needsUpdate = true;
+    trailGeometry.attributes.instanceColorStart.data.needsUpdate = true;
+  };
+
   // The whole route, dim, drawn up front so the shape of the course is visible
   // before the run has travelled it. Only worth having when the camera is riding
   // with the player or when two runs are being compared — see showGuides().
-  const routeOutline = new Line2(
-    new LineGeometry().setPositions(points),
+  //
+  // On a TP run this is the clean route, with every failed attempt already gone. It
+  // is there to say which way next, and fifty dead ends fanning out of a checkpoint
+  // answer that question worse than nothing at all.
+  const outlinePositions = new Float32Array(cleanRoute.length * 6);
+  for (let slot = 0; slot < cleanRoute.length; slot++) {
+    const start = cleanRoute[slot] * 3;
+    for (let axis = 0; axis < 3; axis++) {
+      outlinePositions[slot * 6 + axis] = points[start + axis];
+      outlinePositions[slot * 6 + 3 + axis] = points[start + 3 + axis];
+    }
+  }
+  const routeOutline = new LineSegments2(
+    new LineSegmentsGeometry().setPositions(outlinePositions),
     new LineMaterial({
       color: "#334155",
       linewidth: 1.4,
@@ -316,22 +419,7 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
       dashed: false,
     }),
   );
-  routeOutline.computeLineDistances();
   scene.add(routeOutline);
-
-  const trailGeometry = new LineGeometry().setPositions(points);
-  trailGeometry.setColors(colors);
-  const trail = new Line2(
-    trailGeometry,
-    new LineMaterial({
-      linewidth: 3.4,
-      vertexColors: true,
-      resolution,
-      dashed: false,
-    }),
-  );
-  trail.computeLineDistances();
-  scene.add(trail);
 
   // --- markers -------------------------------------------------------------
   const marker = new THREE.Mesh(
@@ -828,12 +916,69 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
     return THREE.MathUtils.lerp(heightAt(low), heightAt(high), clamped - low);
   };
 
+  // --- the run with its failed attempts skipped ----------------------------
+  /**
+   * Whether playback runs on the clean route instead of the recorded one.
+   *
+   * With this on, the failed attempts are not merely rubbed off the line, they are
+   * not played: the clock counts only the segments that survived, and where the
+   * runner teleports back to a checkpoint the playback steps straight over the
+   * attempt that got them sent there. What you watch is the run they would have had
+   * if they had hit everything first time, which is what the run's time without
+   * teleports actually means.
+   */
+  let skipTeleports = false;
+
+  /**
+   * The recorded tick that a moment on the clean clock lands on.
+   *
+   * The clean clock counts surviving segments, so a whole second of it is exactly
+   * `tickRate` of them, wherever in the recording they came from. The fraction is
+   * carried through so the position and the view are still interpolated between two
+   * ticks — the two ends of one segment, which are always a real tick apart.
+   */
+  const cleanIndexAt = (seconds) => {
+    const position = THREE.MathUtils.clamp(
+      seconds * track.tickRate,
+      0,
+      cleanRoute.length,
+    );
+    const slot = Math.floor(position);
+    if (slot >= cleanRoute.length) return track.count - 1;
+    return cleanRoute[slot] + (position - slot);
+  };
+
   const durationOf = (sourceTrack) =>
-    (sourceTrack.count - 1) / sourceTrack.tickRate;
+    sourceTrack === track && skipTeleports
+      ? teleports.cleanDuration
+      : (sourceTrack.count - 1) / sourceTrack.tickRate;
   const activeTrack = () => (pov === "rival" && rival ? rival.track : track);
   const activeDuration = () => durationOf(activeTrack());
   const indexAtTime = (seconds, sourceTrack) =>
-    Math.min(seconds * sourceTrack.tickRate, sourceTrack.count - 1);
+    sourceTrack === track && skipTeleports
+      ? cleanIndexAt(seconds)
+      : Math.min(seconds * sourceTrack.tickRate, sourceTrack.count - 1);
+
+  /**
+   * Turn skipping on or off without moving the runner on screen.
+   *
+   * The two clocks disagree about what time it is — the same tick of the recording is
+   * 40 seconds into the run and 26 seconds into the clean route — so the switch keeps
+   * the tick and reads it off the other clock. Anything else drops the camera
+   * somewhere else in the map the moment the box is ticked.
+   */
+  const setSkipTeleports = (on) => {
+    const next = Boolean(on) && wasted.length > 0;
+    if (next === skipTeleports) return skipTeleports;
+    const tick = Math.round(indexAtTime(playbackTime, track));
+    skipTeleports = next;
+    playbackTime = THREE.MathUtils.clamp(
+      (next ? teleports.keptBefore[tick] : tick) / track.tickRate,
+      0,
+      activeDuration(),
+    );
+    return skipTeleports;
+  };
 
   let viewWidth = 0;
   let viewHeight = 0;
@@ -951,8 +1096,22 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
 
     const referencePosition = indexAtTime(playbackTime, track);
     const index = Math.round(referencePosition);
-    // Line2 draws one instance per segment, so this reveals the path as it goes.
-    trailGeometry.instanceCount = Math.max(1, index);
+
+    // Every failed attempt the runner has already teleported out of comes off the
+    // line. Skipping plays none of them, so all of them are gone from the start.
+    const erased = skipTeleports
+      ? wasted.length
+      : rangesReachedBy(wasted, index);
+    eraseThrough(erased);
+    // One instance per segment, so this reveals the path as it goes. The erased
+    // stretches are behind the runner and no longer in the buffer, so the count of
+    // segments drawn is the count of ticks travelled less the ones rubbed out.
+    trailGeometry.instanceCount = Math.max(
+      1,
+      skipTeleports
+        ? teleports.keptBefore[index]
+        : index - teleports.erasedThrough[erased],
+    );
 
     positionAt(referencePosition, scratch);
     marker.position.copy(scratch);
@@ -993,8 +1152,17 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
         rivalIndex === null
           ? null
           : Math.round(marker.position.distanceTo(rivalMarker.position)),
-      time: hudIndex / hudTrack.tickRate,
-      progress: hudIndex / (hudTrack.count - 1),
+      // On the clean route the clock is the playback's own, not the recording's:
+      // the point of skipping is that the failed attempts do not count.
+      time:
+        hudTrack === track && skipTeleports
+          ? playbackTime
+          : hudIndex / hudTrack.tickRate,
+      progress: THREE.MathUtils.clamp(
+        playbackTime / (activeDuration() || 1),
+        0,
+        1,
+      ),
       speed: hudTrack.speed[hudIndex],
       verticalSpeed: hudTrack.verticalSpeed[hudIndex],
       forward: hudTrack.forward[hudIndex] / 127,
@@ -1021,6 +1189,19 @@ export const createPlayer = ({ canvas, track, onFrame }) => {
     setPov,
     tickRate: track.tickRate,
     tickCount: track.count,
+    /**
+     * What the teleports cost this run. `attempts` is how many failed tries were
+     * found, which is not quite the teleport count: a teleport that lands somewhere
+     * the runner had not already been is not a checkpoint return and nothing of the
+     * run is thrown away by it. Zero on a pro run, and zero for a player built
+     * without `trimTeleports`, where `cleanDuration` is then simply the run's own.
+     */
+    teleportCost: {
+      attempts: wasted.length,
+      wastedSeconds: teleports.wastedSeconds,
+      cleanDuration: teleports.cleanDuration,
+    },
+    setSkipTeleports,
     /**
      * Alignment check: for ticks where the replay says the player was standing on
      * something, cast a ray down from just above their feet and measure how far it
