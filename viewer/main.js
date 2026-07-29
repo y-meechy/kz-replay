@@ -479,11 +479,11 @@ const reportedDuration = () =>
  */
 const showTeleportTools = () => {
   const cost = player?.teleportCost;
-  const trimmed = Boolean(cost?.attempts) && !activeRivalRun;
+  const showing = Boolean(cost?.attempts) && !activeRivalRun;
 
-  watchNotp.hidden = !trimmed;
-  skipTpRow.hidden = !trimmed;
-  if (!trimmed) {
+  watchNotp.hidden = !showing;
+  skipTpRow.hidden = !showing;
+  if (!showing) {
     skipTpToggle.checked = false;
     player?.setSkipTeleports(false);
     return;

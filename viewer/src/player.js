@@ -12,7 +12,11 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { TRACK_FLAG } from "../../src/track.js";
-import { analyseTeleports, rangesReachedBy } from "../../src/teleports.js";
+import {
+  analyseTeleports,
+  rangesReachedBy,
+  wastedRanges,
+} from "../../src/teleports.js";
 
 // Source is Z-up and we render Y-up.
 const toWorld = (x, y, z) => [x, z, -y];
@@ -321,7 +325,10 @@ export const createPlayer = ({
   // player that was told not to trim: the trail is then drawn and timed exactly as
   // the recording has it, which is every code path below doing nothing.
   // See src/teleports.js.
-  const teleports = analyseTeleports(track, trimTeleports ? undefined : []);
+  const teleports = analyseTeleports(
+    track,
+    trimTeleports ? wastedRanges(track) : [],
+  );
   const wasted = teleports.ranges;
   const cleanRoute = teleports.keptSegments;
   const segmentCount = track.count - 1;
@@ -340,7 +347,10 @@ export const createPlayer = ({
   const segmentPositions = new Float32Array(segmentCount * 6);
   const segmentColors = new Float32Array(segmentCount * 6);
 
-  const drawSegment = (segment, slot) => {
+  // Copy the two endpoints of one segment of the path into one slot of the buffer.
+  // A slot is a place in the draw order, not a place on the path: erasing is a
+  // matter of writing the survivors into the slots the erased ones had.
+  const writeSegment = (segment, slot) => {
     const target = slot * 6;
     const start = segment * 3;
     for (let axis = 0; axis < 3; axis++) {
@@ -352,7 +362,7 @@ export const createPlayer = ({
   };
 
   for (let segment = 0; segment < segmentCount; segment++) {
-    drawSegment(segment, segment);
+    writeSegment(segment, segment);
   }
 
   const trailGeometry = new LineSegmentsGeometry();
@@ -369,6 +379,9 @@ export const createPlayer = ({
   );
   scene.add(trail);
 
+  // How many of the wasted stretches are currently off the line.
+  let erasedRanges = 0;
+
   /**
    * Rub out the failed attempts the runner has already teleported out of.
    *
@@ -379,7 +392,6 @@ export const createPlayer = ({
    * Only the count matters, because the wasted stretches are erased in order — the
    * runner cannot teleport out of the fourth one before the third.
    */
-  let erasedRanges = 0;
   const eraseThrough = (count) => {
     if (erasedRanges === count) return;
     erasedRanges = count;
@@ -387,7 +399,7 @@ export const createPlayer = ({
     for (let segment = 0; segment < segmentCount; segment++) {
       const range = teleports.rangeOfSegment[segment];
       if (range >= 0 && range < count) continue;
-      drawSegment(segment, slot++);
+      writeSegment(segment, slot++);
     }
     trailGeometry.attributes.instanceStart.data.needsUpdate = true;
     trailGeometry.attributes.instanceColorStart.data.needsUpdate = true;
@@ -402,10 +414,11 @@ export const createPlayer = ({
   // answer that question worse than nothing at all.
   const outlinePositions = new Float32Array(cleanRoute.length * 6);
   for (let slot = 0; slot < cleanRoute.length; slot++) {
+    const target = slot * 6;
     const start = cleanRoute[slot] * 3;
     for (let axis = 0; axis < 3; axis++) {
-      outlinePositions[slot * 6 + axis] = points[start + axis];
-      outlinePositions[slot * 6 + 3 + axis] = points[start + 3 + axis];
+      outlinePositions[target + axis] = points[start + axis];
+      outlinePositions[target + 3 + axis] = points[start + 3 + axis];
     }
   }
   const routeOutline = new LineSegments2(
@@ -948,14 +961,23 @@ export const createPlayer = ({
     return cleanRoute[slot] + (position - slot);
   };
 
+  /**
+   * Whether a track is timed on the clean clock rather than on its recording.
+   *
+   * Only ever the run being watched, and only while skipping. A rival keeps its own
+   * recorded clock either way: the two runs are played against each other, and a
+   * clock that skipped part of one of them would not be a race any more.
+   */
+  const onCleanClock = (sourceTrack) => sourceTrack === track && skipTeleports;
+
   const durationOf = (sourceTrack) =>
-    sourceTrack === track && skipTeleports
+    onCleanClock(sourceTrack)
       ? teleports.cleanDuration
       : (sourceTrack.count - 1) / sourceTrack.tickRate;
   const activeTrack = () => (pov === "rival" && rival ? rival.track : track);
   const activeDuration = () => durationOf(activeTrack());
   const indexAtTime = (seconds, sourceTrack) =>
-    sourceTrack === track && skipTeleports
+    onCleanClock(sourceTrack)
       ? cleanIndexAt(seconds)
       : Math.min(seconds * sourceTrack.tickRate, sourceTrack.count - 1);
 
@@ -1154,10 +1176,9 @@ export const createPlayer = ({
           : Math.round(marker.position.distanceTo(rivalMarker.position)),
       // On the clean route the clock is the playback's own, not the recording's:
       // the point of skipping is that the failed attempts do not count.
-      time:
-        hudTrack === track && skipTeleports
-          ? playbackTime
-          : hudIndex / hudTrack.tickRate,
+      time: onCleanClock(hudTrack)
+        ? playbackTime
+        : hudIndex / hudTrack.tickRate,
       progress: THREE.MathUtils.clamp(
         playbackTime / (activeDuration() || 1),
         0,
