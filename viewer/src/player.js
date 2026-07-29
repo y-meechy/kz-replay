@@ -28,6 +28,13 @@ import {
   VRF_UNITS_PER_EXPORTED_METRE,
   VRF_YAW_CORRECTION,
 } from "./vrfExport.js";
+import {
+  createViewModel,
+  disposeViewModelAssets,
+  disposeWeaponAssets,
+  loadViewModelAssets,
+  loadWeaponAssets,
+} from "./weapon.js";
 
 // Source is Z-up and we render Y-up.
 const toWorld = (x, y, z) => [x, z, -y];
@@ -251,9 +258,9 @@ const isSoftwareRenderer = (name) =>
  *                        another with no controls at all, and a line quietly
  *                        vanishing there is a glitch rather than a feature.
  * @param mode            which of CS2KZ's two modes this run was set in, "classic" or
- *                        "vanilla". It decides how the runner stands: a classic run holds
- *                        a USP, a vanilla one a knife, and the two are posed differently
- *                        whether or not anything is drawn in their hands. See
+ *                        "vanilla". It decides how the runner stands and what is in their
+ *                        hands: a USP-S in classic, a knife in vanilla, and the two are
+ *                        posed differently whether or not anything is drawn. See
  *                        stanceForMode().
  */
 export const createPlayer = ({
@@ -500,7 +507,35 @@ export const createPlayer = ({
   let characterAsset = null;
   let character = null;
   let rivalCharacter = null;
+
+  // --- what they are carrying ----------------------------------------------
+  // A knife in vanilla, a USP-S in classic, and two separate things drawn from it: the rigid
+  // model in the runner's hand for the outside cameras, and CS2's own first-person viewmodel
+  // — arms, weapon and idle in one file — hung off the camera for the inside one. See
+  // weapon.js for why those cannot be the same object.
+  // One answer, used three times over: the body's pose, the model in its hand, and which of
+  // the two first-person viewmodels to hang off the camera.
   const stance = stanceForMode(mode);
+  let weaponAssets = null;
+  let viewModelAssets = null;
+  let viewModel = null;
+  let showWeapons = true;
+  // How far the runner has gone, in Source units, which is the only thing the viewmodel's
+  // sway is a function of. Accumulated rather than integrated from the track because the
+  // point is a phase that stops when the replay does.
+  let travelled = 0;
+
+  /**
+   * Hand one body this run's weapon, or nothing if the weapons have not arrived yet.
+   *
+   * Called on every body the moment it exists and again when the weapons load, because
+   * either of the two downloads may finish first: whichever is second hands over what the
+   * first one left waiting.
+   */
+  const armCharacter = (who) => {
+    who?.setWeapon(weaponAssets?.[stance] ?? null);
+    who?.setWeaponVisible(showWeapons);
+  };
 
   const buildRivalCharacter = () => {
     rivalCharacter?.dispose();
@@ -510,9 +545,12 @@ export const createPlayer = ({
       asset: characterAsset,
       tint: RIVAL_COLOUR,
       // Both runs are on the same course in the same mode — main.js refuses a comparison that
-      // is not — so the rival stands the way this run does.
+      // is not — so the rival stands and carries what this run does.
       stance,
     });
+    // Both runs are on the same course in the same mode — main.js refuses a comparison
+    // that is not — so the rival carries what this run carries.
+    armCharacter(rivalCharacter);
     scene.add(rivalCharacter.object);
   };
 
@@ -526,8 +564,38 @@ export const createPlayer = ({
     }
     characterAsset = asset;
     character = createCharacter({ asset, stance });
+    armCharacter(character);
     scene.add(character.object);
     buildRivalCharacter();
+  });
+
+  loadWeaponAssets().then((assets) => {
+    if (disposed) {
+      disposeWeaponAssets(assets);
+      return;
+    }
+    weaponAssets = assets;
+    armCharacter(character);
+    armCharacter(rivalCharacter);
+  });
+
+  loadViewModelAssets().then((assets) => {
+    if (disposed) {
+      disposeViewModelAssets(assets);
+      return;
+    }
+    viewModelAssets = assets;
+    const asset = assets[stance];
+    if (!asset) return;
+    viewModel = createViewModel({
+      asset,
+      name: stance,
+      layer: CHARACTER_LAYER,
+    });
+    // Hidden until a frame in first person asks for it, so it cannot flash into an outside
+    // camera on the frame it finishes loading.
+    viewModel.object.visible = false;
+    camera.add(viewModel.object);
   });
 
   /**
@@ -1467,9 +1535,10 @@ export const createPlayer = ({
     }
 
     // How much every animation advances this frame. Zero when the replay is paused, and that
-    // is the whole of how the runner holds still with it: a paused replay whose runner keeps
-    // jogging on the spot reads as a bug rather than as a pause. Scaled by the playback rate
-    // for the same reason the clock is, so a quarter-speed replay is a quarter-speed stride.
+    // is the whole of how the models hold still with it: a paused replay whose runner keeps
+    // jogging on the spot, or whose weapon keeps breathing in the corner of the view, reads
+    // as a bug rather than as a pause. Scaled by the playback rate for the same reason the
+    // clock is, so a quarter-speed replay is a quarter-speed stride.
     const animationDelta = playing ? delta * rate : 0;
 
     const referencePosition = indexAtTime(playbackTime, track);
@@ -1502,15 +1571,18 @@ export const createPlayer = ({
     marker.visible = guides && !character;
     routeOutline.visible = guides;
 
+    // Whose eyes the camera is behind, if anyone's. That body is not drawn — the camera is
+    // inside its head, so all it could add is the inside of a gas mask — and it is the one
+    // the viewmodel stands in for.
+    const inside = cameraMode === "first-person";
+
     if (character) {
       character.update({
         position: scratch,
         delta: animationDelta,
         ...characterStateAt(referencePosition, track),
       });
-      // Not in first person: the camera sits inside this body's head, so all it can
-      // possibly draw is the inside of a gas mask.
-      character.setVisible(!(cameraMode === "first-person" && pov === "main"));
+      character.setVisible(!(inside && pov === "main"));
     }
 
     let rivalIndex = null;
@@ -1529,12 +1601,21 @@ export const createPlayer = ({
           delta: animationDelta,
           ...characterStateAt(rivalPosition, rival.track),
         });
-        rivalCharacter.setVisible(
-          !(cameraMode === "first-person" && pov === "rival"),
-        );
+        rivalCharacter.setVisible(!(inside && pov === "rival"));
       }
     }
     rivalMarker.visible = Boolean(rival) && !rivalCharacter;
+
+    if (viewModel) {
+      viewModel.object.visible = inside && showWeapons;
+      if (viewModel.object.visible) {
+        const hudTrack = activeTrack();
+        const speed =
+          hudTrack.speed[Math.round(indexAtTime(playbackTime, hudTrack))];
+        travelled += speed * animationDelta;
+        viewModel.update({ delta: animationDelta, travelled, speed });
+      }
+    }
 
     updateCamera(playbackTime, delta);
     resize();
@@ -1777,6 +1858,19 @@ export const createPlayer = ({
     setRate: (value) => {
       rate = value;
     },
+    /**
+     * Whether the runner is holding anything.
+     *
+     * Off is a real preference, not a debug switch: in first person the weapon covers the
+     * bottom right of the view, which on a technical jump is exactly where the block you
+     * are about to land on is. The setting is remembered — see main.js.
+     */
+    setWeaponVisible: (visible) => {
+      showWeapons = Boolean(visible);
+      character?.setWeaponVisible(showWeapons);
+      rivalCharacter?.setWeaponVisible(showWeapons);
+      return showWeapons;
+    },
     setCameraMode,
     cycleCamera: () =>
       setCameraMode(
@@ -1802,7 +1896,10 @@ export const createPlayer = ({
       // shared set of textures nobody is pointing at any more.
       character?.dispose();
       rivalCharacter?.dispose();
+      viewModel?.dispose();
       disposeCharacterAsset(characterAsset);
+      disposeWeaponAssets(weaponAssets);
+      disposeViewModelAssets(viewModelAssets);
       // Imported map textures are not freed by Material.dispose(). Use the same
       // deduplicated sweep as an abandoned load, then detach the map so the general
       // scene sweep below does not dispose its geometry and materials twice.

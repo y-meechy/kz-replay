@@ -178,6 +178,7 @@ const watchViews = el("watch-views");
 const controls = document.querySelector(".controls");
 const mhudToggle = el("mhud-toggle");
 const mhudCheck = el("mhud-check");
+const weaponCheck = el("weapon-check");
 
 let player = null;
 let scrubbing = false;
@@ -264,6 +265,38 @@ const setMhud = (on) => {
   mhudToggle.setAttribute("aria-pressed", String(mhudOn));
   mhudCheck.checked = mhudOn;
   mhud.setVisible(mhudOn);
+};
+
+// Off unless someone has asked for it, which is the opposite way round from the HUD.
+//
+// The HUD is information about the run. A weapon is scenery: it is what the game looked like,
+// and it costs the bottom right of a first-person view — which on a technical jump is where
+// the block you are about to land on is. So the plain replay is the one without it, and the
+// weapon is something you turn on.
+//
+// The key is `kz.weapons`, not the `kz.weapon` an earlier build wrote, because the switch
+// covers more than it did — the arms and the whole first-person view model, not just a prop in
+// a hand — and a stored verdict on the old, half-built version should not decide the new one.
+//
+// Nothing is written until somebody actually uses the switch. Storing a value on first sight
+// of the page turns a default into a decision, and then a wrong default is indistinguishable
+// from a real preference forever after.
+const WEAPONS_KEY = "kz.weapons";
+let weaponsOn = localStorage.getItem(WEAPONS_KEY) === "on";
+
+/** Show what the preference currently is, without claiming anyone chose it. */
+const applyWeapons = () => {
+  weaponCheck.checked = weaponsOn;
+  // Optional chained rather than guarded: the switch is on the page before any run is
+  // open, and a player created later is handed the preference as it is built.
+  player?.setWeaponVisible(weaponsOn);
+};
+
+/** Somebody used the switch, so remember it. */
+const setWeapons = (on) => {
+  weaponsOn = Boolean(on);
+  localStorage.setItem(WEAPONS_KEY, weaponsOn ? "on" : "off");
+  applyWeapons();
 };
 
 /**
@@ -816,10 +849,11 @@ const openRun = async (
       // around the run sometimes reaches back into a warm-up attempt that ended in
       // one, and rubbing a stretch out of a pro line would be simply wrong.
       trimTeleports: (run.meta.teleports ?? 0) > 0,
-      // How the runner stands: CS2KZ hands out a USP in classic and a knife in vanilla, and
-      // the two are posed differently.
+      // How the runner stands and what is in their hands: CS2KZ hands out a USP in classic
+      // and a knife in vanilla, and the two are posed differently.
       mode: run.meta.mode,
     });
+    player.setWeaponVisible(weaponsOn);
     if (import.meta.env.DEV) window.__kzPlayer = player;
 
     watchRunner.textContent = run.meta.player?.name ?? "unknown runner";
@@ -925,6 +959,7 @@ cameras.addEventListener("click", (event) => {
 
 mhudToggle.addEventListener("click", () => setMhud(!mhudOn));
 mhudCheck.addEventListener("change", () => setMhud(mhudCheck.checked));
+weaponCheck.addEventListener("change", () => setWeapons(weaponCheck.checked));
 
 povs.addEventListener("click", (event) => {
   const pov = event.target.dataset.pov;
@@ -1127,6 +1162,7 @@ window.addEventListener("popstate", route);
 window.addEventListener("hashchange", route);
 
 setMhud(mhudOn);
+applyWeapons();
 // Both lists are static files, so they load together and neither waits for the other.
 await Promise.all([browse.load(), feed.load()]);
 route();

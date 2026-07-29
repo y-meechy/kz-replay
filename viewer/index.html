@@ -83,6 +83,15 @@
           <input type="checkbox" id="mhud-check" checked />
           <span>Movement HUD</span>
         </label>
+
+        <!-- The knife or the USP the run's mode gives the player, and in first person the
+             arms holding it. Off by default: it is what the game looked like rather than
+             anything about the run, and in first person it covers the corner of the view
+             where the next block to land on is. main.js owns the stored preference. -->
+        <label class="toggle">
+          <input type="checkbox" id="weapon-check" />
+          <span>Weapon</span>
+        </label>
         <button
           id="map-convert"
           class="button button--small"

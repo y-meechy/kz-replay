@@ -28,6 +28,7 @@ import {
   VRF_UNITS_PER_EXPORTED_METRE,
   VRF_YAW_CORRECTION,
 } from "./vrfExport.js";
+import { createWeapon, WEAPON_BONE } from "./weapon.js";
 
 export const CHARACTER_URL = "models/ct.glb";
 
@@ -123,8 +124,8 @@ const MAX_TIME_SCALE = 2.2;
  * it is duck state and speed. Nothing here needs the previous frame, which is what keeps
  * the whole state machine to one expression.
  *
- * Returns the state, not a clip name: the .glb holds each of these once per stance, and which
- * stance a run uses is settled when the body is built rather than tick by tick.
+ * Returns the state, not a clip name: the .glb holds each of these twice over, once posed
+ * for a pistol and once for a knife, and which of the two is not a per-tick decision.
  */
 const pickClip = ({ speed, ducking, onGround, verticalSpeed }) => {
   if (!onGround) {
@@ -226,11 +227,50 @@ export const createCharacter = ({ asset, tint = null, stance = "pistol" }) => {
     current = next;
   };
 
+  // The bone CS2 animates to say where the weapon is. Every locomotion clip drives it and its
+  // parent, so anything hung off it is placed by the clip and needs nothing of its own — see
+  // WEAPON_BONE for the two wrong answers that came before it.
+  const holster = body.getObjectByName(WEAPON_BONE);
+  let handWeapon = null;
+  let weaponVisible = true;
+
   return {
     object,
-    // Read back for the alignment checks in player.js's debug hooks, and so that what the
-    // body is posed as is answerable without inferring it from a clip name.
+    // Read back by the debug hooks in player.js, so what the body is posed as is answerable
+    // without inferring it from a clip name.
     stance,
+
+    /** Whether the body is drawn at all. Off inside its own head. */
+    setVisible: (visible) => {
+      object.visible = visible;
+    },
+
+    /**
+     * Put something in the runner's hand, or take it back out.
+     *
+     * The mesh only. How the body stands is settled by its stance, which is a fact about the
+     * run's mode rather than about what the viewer was asked to draw — so a runner in vanilla
+     * stands like someone holding a knife whether or not the knife is on screen.
+     *
+     * @param asset what loadWeaponAssets() resolved for this weapon, or null for nothing
+     */
+    setWeapon: (asset) => {
+      handWeapon?.dispose();
+      handWeapon = null;
+      if (!asset || !holster) return;
+      handWeapon = createWeapon({
+        asset,
+        tint,
+        layer: CHARACTER_LAYER,
+      });
+      handWeapon.object.visible = weaponVisible;
+      holster.add(handWeapon.object);
+    },
+
+    setWeaponVisible: (visible) => {
+      weaponVisible = Boolean(visible);
+      if (handWeapon) handWeapon.object.visible = weaponVisible;
+    },
 
     /**
      * Put the body where the replay says it was, facing where it was looking, doing what
@@ -250,9 +290,6 @@ export const createCharacter = ({ asset, tint = null, stance = "pistol" }) => {
       verticalSpeed,
       delta,
     }) => {
-      object.position.copy(position);
-      object.rotation.y = yaw;
-
       const state = pickClip({ speed, ducking, onGround, verticalSpeed });
       play(`${state}_${stance}`);
 
@@ -267,11 +304,12 @@ export const createCharacter = ({ asset, tint = null, stance = "pistol" }) => {
           : 1;
       }
 
+      // Zero while the replay is paused, which is the whole of how the body freezes with
+      // it: the pose it was in is the pose it holds.
       mixer.update(delta);
-    },
 
-    setVisible: (visible) => {
-      object.visible = visible;
+      object.position.copy(position);
+      object.rotation.y = yaw;
     },
 
     /**
@@ -283,6 +321,7 @@ export const createCharacter = ({ asset, tint = null, stance = "pistol" }) => {
      * whole node tree, so it has to be told to let go.
      */
     dispose: () => {
+      handWeapon?.dispose();
       mixer.stopAllAction();
       mixer.uncacheRoot(body);
       for (const material of materials) material.dispose();
