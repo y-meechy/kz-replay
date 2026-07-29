@@ -23,6 +23,7 @@ ENV NODE_ENV=production \
     TZ=Europe/Berlin \
     KZ_DATA_DIR=/data/catalog \
     KZ_MAPS_DIR=/data/maps \
+    KZ_MODELS_DIR=/data/models \
     KZ_STATE_DIR=/data/state \
     KZ_TOOLS_DIR=/opt/kz-tools \
     KZ_CS2_DIR=/data/cs2
