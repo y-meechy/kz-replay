@@ -274,19 +274,22 @@ const commands = {
    * old white ball if the file is not there, so this is optional.
    */
   async ["player-model"]({ flags }) {
-    const { path, size, clips } = await convertPlayerModel({
+    const options = {
       toolsDir: TOOLS_DIR,
       outputDir: MODELS_DIR,
-      ...(flags["texture-size"]
-        ? { textureSize: Number(flags["texture-size"]) }
-        : {}),
       // --keep-work leaves the raw export in place, which is how you look at what the
       // exporter actually produced when the character comes out wrong.
       cleanup: !flags["keep-work"],
       log: (message) => console.log(`  ${message}`),
+    };
+    const { path, size, clips } = await convertPlayerModel({
+      ...options,
+      ...(flags["texture-size"]
+        ? { textureSize: Number(flags["texture-size"]) }
+        : {}),
     });
 
-    console.log(`\nwrote ${path} (${(size / 1e6).toFixed(1)} MB)`);
+    console.log(`\nwrote ${path} (${(size / 1e6).toFixed(2)} MB)`);
     console.log(`clips: ${clips.join(", ")}`);
   },
 

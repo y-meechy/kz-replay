@@ -25,7 +25,7 @@
 import { execFile } from "node:child_process";
 import { copyFile, mkdir, readdir, rename, rm, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { NodeIO } from "@gltf-transform/core";
 import { cs2IndexPath, ensureCs2Assets, syncCs2Index } from "./cs2Content.js";
@@ -163,9 +163,17 @@ const borrowAssets = async ({ cs2Dir, toolsDir, cli, roots, log }) => {
   return seen.size;
 };
 
-/** Ask the CLI to decompile one asset into `dir`, as glb where it makes sense. */
-const exportGlb = async ({ cli, cs2Dir, path, dir, extra = [] }) =>
-  run(
+/**
+ * Ask the CLI to decompile one asset into `dir` as glb, and hand back the file.
+ *
+ * The exporter mirrors the asset's own path under `dir` with the extension swapped, and it
+ * says nothing when it declines to write anything at all — so every caller has to check,
+ * and the check lives here.
+ *
+ * @returns the path of the written .glb
+ */
+const exportGlb = async ({ cli, cs2Dir, path, dir, extra = [] }) => {
+  await run(
     cli,
     [
       "-i",
@@ -181,6 +189,17 @@ const exportGlb = async ({ cli, cs2Dir, path, dir, extra = [] }) =>
     ],
     BIG_OUTPUT,
   );
+
+  const glb = join(dir, `${path.replace(/\.[^./]+$/, "")}.glb`);
+  if (!existsSync(glb)) {
+    const found = await readdir(dirname(glb)).catch(() => []);
+    throw new Error(
+      `the exporter produced no glb for ${path}. Looked for ${glb}, found ` +
+        `${found.join(", ") || "nothing"}`,
+    );
+  }
+  return glb;
+};
 
 /**
  * Copy one document's animation onto another document's bones.
@@ -368,6 +387,36 @@ const publishGlb = async ({ from, outputDir, name }) => {
   return { path: final, size };
 };
 
+/**
+ * Shrink a merged .glb next to itself, then put it in place for the viewer.
+ *
+ * The fall back to the uncompressed file is there because this is the one step whose
+ * absence still leaves something worth shipping: a bigger file that draws the same.
+ *
+ * @param name      what the packed file is called in the work directory
+ * @param publishAs the name the viewer fetches it by, where that differs
+ * @returns { path, size }
+ */
+const packAndPublish = async ({
+  input,
+  outputDir,
+  name,
+  publishAs = name,
+  textureSize,
+}) => {
+  const packed = join(dirname(input), `${name}.opt.glb`);
+  await run(
+    GLTF_TRANSFORM,
+    optimizerArgs(input, packed, textureSize),
+    BIG_OUTPUT,
+  );
+  return publishGlb({
+    from: existsSync(packed) ? packed : input,
+    outputDir,
+    name: publishAs,
+  });
+};
+
 /** The two tools every conversion in here needs, and where to get them. */
 const requireTools = (toolsDir) => {
   const cli = join(toolsDir, "Source2Viewer-CLI");
@@ -430,12 +479,11 @@ export const convertPlayerModel = async ({
   // the exporter write the skeleton at all, so it stays on even though the two clips it
   // brings along are thrown away in step 4.
   log("exporting the body, its materials and its skeleton…");
-  const modelDir = join(workDir, "model");
-  await exportGlb({
+  const modelGlb = await exportGlb({
     cli,
     cs2Dir,
     path: CT_MODEL,
-    dir: modelDir,
+    dir: join(workDir, "model"),
     extra: [
       "--gltf_export_materials",
       "--gltf_textures_adapt",
@@ -444,26 +492,21 @@ export const convertPlayerModel = async ({
       CT_MESHES.join(","),
     ],
   });
-  const modelGlb = join(modelDir, `${CT_MODEL.replace(/\.vmdl$/, "")}.glb`);
-  if (!existsSync(modelGlb)) {
-    throw new Error(
-      `the exporter produced no glb for ${CT_MODEL}. Looked for ${modelGlb}, found ` +
-        `${(await readdir(modelDir).catch(() => [])).join(", ") || "nothing"}`,
-    );
-  }
 
   // 3. One glb per clip: a skeleton with no mesh, and the clip on it.
   log(`exporting ${CT_CLIPS.length} locomotion clips…`);
   const clipDir = join(workDir, "clips");
   const clipGlbs = [];
   for (const clip of CT_CLIPS) {
-    const path = `${CLIP_DIR}/${clip}.vnmclip`;
-    await exportGlb({ cli, cs2Dir, path, dir: clipDir });
-    const glb = join(clipDir, `${CLIP_DIR}/${clip}.glb`);
-    if (!existsSync(glb)) {
-      throw new Error(`the exporter produced no glb for the clip ${clip}`);
-    }
-    clipGlbs.push([clip, glb]);
+    clipGlbs.push([
+      clip,
+      await exportGlb({
+        cli,
+        cs2Dir,
+        path: `${CLIP_DIR}/${clip}.vnmclip`,
+        dir: clipDir,
+      }),
+    ]);
   }
 
   // 4. Point the clips at the body's own bones.
@@ -480,17 +523,11 @@ export const convertPlayerModel = async ({
   // 5. Shrink. Nearly all of the size is the body and glove textures, so that is what
   // this is for; the meshes are packed losslessly.
   log("compressing…");
-  const packed = join(workDir, "ct.opt.glb");
-  await run(
-    GLTF_TRANSFORM,
-    optimizerArgs(mergedGlb, packed, textureSize),
-    BIG_OUTPUT,
-  );
-
-  const { path, size } = await publishGlb({
-    from: existsSync(packed) ? packed : mergedGlb,
+  const { path, size } = await packAndPublish({
+    input: mergedGlb,
     outputDir,
     name: "ct",
+    textureSize,
   });
   log(`wrote ${path} at ${(size / 1e6).toFixed(1)} MB`);
   if (cleanup) await rm(workDir, { recursive: true, force: true });
