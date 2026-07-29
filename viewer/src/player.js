@@ -1465,12 +1465,21 @@ export const createPlayer = ({
     seekToProgress: (fraction) => {
       playbackTime = THREE.MathUtils.clamp(fraction, 0, 1) * activeDuration();
     },
-    nudge: (ticks) => {
+    /**
+     * Jump forwards or backwards by a number of seconds, clamped to the run.
+     *
+     * Seconds rather than ticks, because this is the one a keyboard drives and what somebody
+     * skipping through a replay is thinking in is seconds. Clamped rather than wrapped:
+     * hitting the end of a run and being thrown back to the start is not what anyone pressing
+     * an arrow key twice was asking for.
+     */
+    skipSeconds: (seconds) => {
       playbackTime = THREE.MathUtils.clamp(
-        playbackTime + ticks / activeTrack().tickRate,
+        playbackTime + seconds,
         0,
         activeDuration(),
       );
+      return playbackTime;
     },
     setRate: (value) => {
       rate = value;

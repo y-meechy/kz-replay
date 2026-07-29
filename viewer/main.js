@@ -272,6 +272,28 @@ const jumpTo = (seconds) => {
   showPlaying(true);
 };
 
+/**
+ * How far an arrow key moves the replay, in seconds.
+ *
+ * Five is about a jump and a half of a fast run — far enough to cross a course in a few
+ * presses, near enough that you can stop on the bit you wanted. The fine step is for looking
+ * at one jump rather than travelling, and is what the arrows did before they did this.
+ */
+const SKIP_SECONDS = 5;
+const FINE_SKIP_SECONDS = 0.125;
+
+/**
+ * Move the replay along without touching whether it is playing.
+ *
+ * Deliberately unlike jumpTo(), which starts playback because it is called from things that
+ * mean "show me this bit". Skipping is as often done paused, a frame at a time, and a key that
+ * un-paused the replay under you would make that impossible.
+ */
+const skipBy = (seconds) => {
+  if (!player) return;
+  player.skipSeconds(seconds);
+};
+
 /** Where on the selected run's clock a course distance is. */
 const selectedTimeAt = (distance) => {
   if (!insights) return 0;
@@ -911,16 +933,30 @@ if (import.meta.env.DEV) {
   mapConvert.remove();
 }
 
+/**
+ * Whether a key belongs to whoever is typing rather than to the replay.
+ *
+ * The instanceof is not defensive noise. A keydown's target is only an element when something
+ * on the page has focus; on a window-level listener it can be the window or the document, and
+ * neither has matches(), so the old form threw and swallowed the key press whole — every
+ * shortcut in here silently dead until something was clicked.
+ */
+const isTyping = (target) =>
+  target instanceof Element && target.matches("textarea, input, select");
+
 window.addEventListener("keydown", (event) => {
   if (!player || watchRoot.hidden) return;
-  if (event.target.matches("textarea, input, select")) return;
+  if (isTyping(event.target)) return;
   if (event.code === "Space") {
     event.preventDefault();
     showPlaying(player.togglePlay());
-  } else if (event.code === "ArrowRight") {
-    player.nudge(event.shiftKey ? 64 : 8);
-  } else if (event.code === "ArrowLeft") {
-    player.nudge(event.shiftKey ? -64 : -8);
+  } else if (event.code === "ArrowRight" || event.code === "ArrowLeft") {
+    // Five seconds plain, and a tenth of a second with shift held. Skipping through a replay
+    // is the common thing and wants a stride you can cross a map with; the fine step is for
+    // reading one jump, and is what these keys used to do on their own.
+    event.preventDefault();
+    const step = event.shiftKey ? FINE_SKIP_SECONDS : SKIP_SECONDS;
+    skipBy(event.code === "ArrowLeft" ? -step : step);
   } else if (event.key.toLowerCase() === "c") {
     const order = Object.keys(VIEWS);
     applyView(order[(order.indexOf(activeView) + 1) % order.length]);
