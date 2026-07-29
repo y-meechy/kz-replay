@@ -48,9 +48,10 @@ const distanceTo = (positions, tick, x, y, z) =>
 /**
  * The stretches of the run that ended in a teleport back to a checkpoint.
  *
- * `{ from, to }` are tick indices: `from` is the tick the runner left the checkpoint
- * on, `to` is the tick they arrived back at it. Both ends are on the checkpoint, so
- * dropping the path between them leaves no gap to look at.
+ * `{ from, to }` are tick indices: `from` is the tick the wasted stretch starts on,
+ * normally the tick the runner left the checkpoint, `to` is the tick they arrived
+ * back at it. Both ends are on the checkpoint, so dropping the path between them
+ * leaves no gap to look at.
  *
  * One per teleport, so each failed try comes off the line at the moment the runner
  * gives up on it. But the tries at one checkpoint are deliberately made to join up
@@ -81,19 +82,6 @@ export const wastedRanges = (track) => {
     const y = track.positions[tick * 3 + 1];
     const z = track.positions[tick * 3 + 2];
 
-    /**
-     * Whether this is another try at the checkpoint the last teleport landed on.
-     *
-     * Judged arrival against arrival, never arrival against departure: both are
-     * coordinates the game wrote out of the same saved checkpoint, so two tries at
-     * one checkpoint match to the unit, while a checkpoint the runner moved a block
-     * further up the course does not. A departure is the runner walking, and walking
-     * away from one checkpoint quickly looks like standing on the next.
-     */
-    const retry =
-      ranges.at(-1)?.to === attemptStart &&
-      distanceTo(track.positions, attemptStart, x, y, z) <= SAME_SPOT;
-
     let nearest = Infinity;
     for (let back = attemptStart; back < tick; back++) {
       const distance = distanceTo(track.positions, back, x, y, z);
@@ -106,11 +94,24 @@ export const wastedRanges = (track) => {
       continue;
     }
 
+    /**
+     * Whether this is another try at the checkpoint the last teleport landed on.
+     *
+     * Judged arrival against arrival, never arrival against departure: both are
+     * coordinates the game wrote out of the same saved checkpoint, so two tries at
+     * one checkpoint match to the unit, while a checkpoint the runner moved a block
+     * further up the course does not. A departure is the runner walking, and walking
+     * away from one checkpoint quickly looks like standing on the next.
+     */
+    const isRepeatTry =
+      ranges.at(-1)?.to === attemptStart &&
+      distanceTo(track.positions, attemptStart, x, y, z) <= SAME_SPOT;
+
     // A repeat try runs from the tick the last one ended on, so the two stretches
     // meet. Otherwise, the last tick that was still on the spot: where the runner
     // set off from.
     let from = attemptStart;
-    if (!retry) {
+    if (!isRepeatTry) {
       for (let back = attemptStart; back < tick; back++) {
         if (distanceTo(track.positions, back, x, y, z) <= nearest + SAME_SPOT) {
           from = back;
