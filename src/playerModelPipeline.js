@@ -28,6 +28,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { NodeIO } from "@gltf-transform/core";
+import { mergeDocuments } from "@gltf-transform/functions";
 import { cs2IndexPath, ensureCs2Assets, syncCs2Index } from "./cs2Content.js";
 import { validateGlb } from "./mapPipeline.js";
 import { CS2_DIR, REPO_ROOT, TOOLS_DIR } from "./config.js";
@@ -51,15 +52,74 @@ const CT_MODEL = "agents/models/ctm_sas/ctm_sas.vmdl";
 /**
  * Which of the model's meshes to keep: the body you see from outside, and nothing else.
  *
- * The other three are the defuse kit, which no KZ runner carries, and the model's own
- * first-person arms and sleeves. Those look like the answer to what to draw when the camera
- * is behind the runner's own eyes — they are skinned to the body's skeleton, so these same
- * clips move them for free — and they are not. A locomotion clip poses a body seen from
- * outside: the arms swing wide and the cut above the elbow is an open hole pointed straight
- * at the camera. CS2 draws first person from a separate model of its own, and until this
- * viewer does the same the body it has is the third-person one.
+ * The other three are the defuse kit, which no KZ runner carries, and this model's own
+ * first-person arms and sleeves, which are a dead end. They look like the answer to what
+ * to draw in first person — they are skinned to the body's skeleton, so the locomotion
+ * clips move them for free — and they are not. A locomotion clip poses a body being looked
+ * at from outside: the arms swing wide, the weapon goes up over the shoulder, and the cut
+ * above the elbow is a hole pointed straight at the camera. CS2 does not compose first
+ * person that way and neither do we; see the viewmodel below.
  */
 const CT_MESHES = ["thirdperson_body", "thirdperson_default_gloves"];
+
+/**
+ * What the runner is holding, by the mode the run was set in.
+ *
+ * CS2KZ gives you a knife in vanilla and a USP-S in classic, and those are the two things
+ * a KZ player ever has in their hands. The names on the left are what the viewer asks for,
+ * so character.js and this map have to agree.
+ *
+ * One model each, not two: CS2 dropped the old `w_`/`v_` split, so the same mesh is both
+ * the thing in a runner's hand and the thing filling the corner of a first-person view.
+ * The USP's magazine is a separate model in the depot and is skipped — it is only its own
+ * file so the game can throw it on the floor during a reload.
+ */
+const WEAPONS = {
+  knife: {
+    model: "weapons/models/knife/knife_default_ct/weapon_knife_default_ct.vmdl",
+  },
+  usp: {
+    model: "weapons/models/usp_silencer/weapon_pist_usp_silencer.vmdl",
+    // The pistol ships two whole bodies in one file, `body_legacy` and `body_hd`, and the
+    // exporter writes both — two pistols in the same place, one inside the other, which
+    // reads as a mess of z-fighting on every flat surface. The game picks between them on
+    // a setting nobody watching a replay has.
+    meshes: ["body_hd"],
+  },
+};
+
+/**
+ * The arms CS2 draws when the camera is behind your own eyes.
+ *
+ * A separate model from the character, shared by every agent in the game, and rigged to its
+ * own skeleton — `weapon_arms`, not the body's. That separation is the whole reason first
+ * person works in CS2: the viewmodel is not the player seen from a funny angle, it is its
+ * own little scene, posed by its own clips in a space measured from the camera.
+ */
+const ARMS_MODEL = "weapons/models/shared/arms/weapon_arms.vmdl";
+
+/**
+ * The viewmodel: which weapon and which idle clip, per mode.
+ *
+ * One clip each, and it is an idle rather than a set. CS2's viewmodel locomotion is
+ * additive layers on top of this pose, composed by an animation graph this project does not
+ * export — and a KZ replay does not need them. What it needs is the hands holding the thing
+ * in front of the camera, which is exactly what an idle is.
+ *
+ * The clip's skeleton carries both the arm bones and the weapon's own — `weapon`, `slide`,
+ * `hammer`, and the rest — so one clip poses the arms and the gun together, and the two
+ * models are merged into one file so one mixer drives both.
+ */
+const VIEW_MODELS = {
+  pistol: {
+    weapon: "usp",
+    clip: "animation/anims/viewmodel/pistol/_default_pistol/idle_pistol",
+  },
+  knife: {
+    weapon: "knife",
+    clip: "animation/anims/viewmodel/knife/_default_knife/idle_knife",
+  },
+};
 
 /**
  * The two sets of locomotion clips, one per thing a runner can be holding.
@@ -279,9 +339,9 @@ const copyAnimation = ({ into, from, name, bones }) => {
       .setOutput(output)
       .setInterpolation(sampler.getInterpolation());
     animation.addSampler(copied);
-    // One sampler, a channel per target. A single skeleton means one target per name, but a
-    // file that ever holds two rigs would have the same bone name in each; glTF is happy for
-    // several channels to share a sampler, so the keyframes are stored once either way.
+    // One sampler, a channel per target. A viewmodel is two models in one file — the arms
+    // and the weapon — and a clip that drives both has bones of the same name in each; glTF
+    // is happy for several channels to share a sampler, so the keyframes are stored once.
     for (const bone of targets) {
       animation.addChannel(
         into
@@ -331,10 +391,9 @@ const alignRestPose = ({ from, bones }) => {
 /**
  * Every node in a document, by name.
  *
- * A list per name rather than one node. The body has one skeleton, so today every name is
- * unique — but two rigs in one file both carry a `root_motion`, and keyed on one node the
- * last one would win: the other would keep its own root frame and arrive rotated out of the
- * scene. Cheap to be right about now rather than to debug later.
+ * A list per name rather than one node, because a viewmodel file holds two models that were
+ * rigged separately and both carry a `root_motion`. Keyed on the last one wins, one of the
+ * two keeps its own root frame and that whole model arrives rotated out of the view.
  */
 const nodesByName = (document) => {
   const found = new Map();
@@ -344,6 +403,113 @@ const nodesByName = (document) => {
     found.get(name).push(node);
   }
   return found;
+};
+
+/**
+ * The bone in the arms' skeleton that says where the weapon goes.
+ *
+ * The clip animates it, and it is the whole reason a viewmodel holds together: the hands and
+ * the gun are not two things posed to agree, they are one thing, because the gun hangs off a
+ * bone in the hands' own skeleton. It sits 17 units along the arms' forward axis at rest,
+ * which is about where the hands measure out to.
+ */
+const WEAPON_ATTACH_BONE = "wpn";
+
+/**
+ * Weld the arms, the weapon and their shared idle clip into one viewmodel file.
+ *
+ * Two models in one document so that one AnimationMixer drives both. Kept apart, the hands
+ * and the gun are two mixers on two clocks, and the day they drift is the day the gun is
+ * held next to the hand rather than in it.
+ *
+ * The clip's skeleton is the authority for both: it holds the arm bones and the weapon's
+ * under the names each model uses, so the same rest-pose alignment the body needed applies
+ * here, and one copyAnimation pass reaches both sets. The pistol's `slide` and `hammer` are
+ * driven; the knife has only `weapon` and `weapon_offset`, and channels for bones a model
+ * does not have are dropped.
+ *
+ * @returns how many channels landed
+ */
+const mergeViewModel = async ({ armsGlb, weaponGlb, clipGlb, output, log }) => {
+  const io = new NodeIO();
+  const document = await io.read(armsGlb);
+  const weapon = await io.read(weaponGlb);
+
+  // mergeDocuments copies the weapon's meshes, skins, materials and nodes across but leaves
+  // its scene behind, so its roots have to be adopted or nothing of it is drawn.
+  // Read before the merge, because after it the arms' scene is no longer the only one and
+  // the exporter does not mark a default.
+  const scene = document.getRoot().listScenes()[0];
+  const attachBone = document
+    .getRoot()
+    .listNodes()
+    .find((node) => node.getName() === WEAPON_ATTACH_BONE);
+  if (!attachBone) {
+    throw new Error(
+      `the arms model has no ${WEAPON_ATTACH_BONE} bone to hang the weapon off`,
+    );
+  }
+
+  // The weapon's skeleton goes under the arms' attachment bone; its skinned meshes go beside
+  // them at the top of the scene.
+  //
+  // That split is how glTF works and it matters here. A skinned mesh's own node transform is
+  // ignored — where it is drawn is decided entirely by its joints — so the mesh node can sit
+  // anywhere, and its joints are what has to be in the right place. Hanging the weapon's bone
+  // tree off `wpn` is what puts the gun in the hands; leaving it at the top of the scene,
+  // which is where the merge drops it, leaves the gun posed in its own little world at the
+  // origin, at its own scale and its own angle. Which is exactly what it looked like: a
+  // pistol near a pair of hands rather than in them.
+  const mapping = mergeDocuments(document, weapon);
+  for (const source of weapon.getRoot().listScenes()) {
+    for (const child of source.listChildren()) {
+      const node = mapping.get(child);
+      if (node.getMesh()) {
+        scene.addChild(node);
+        continue;
+      }
+      // Identity, because everything this node was carrying is already carried by the chain
+      // above `wpn`: the arms' root has the same 1/39.37 and the same quarter turn the
+      // weapon's root does, so keeping the weapon's own would apply both twice — a gun a
+      // fortieth of its proper size, turned out of the frame.
+      node
+        .setTranslation([0, 0, 0])
+        .setRotation([0, 0, 0, 1])
+        .setScale([1, 1, 1]);
+      attachBone.addChild(node);
+    }
+  }
+  for (const merged of document.getRoot().listScenes()) {
+    if (merged !== scene) merged.dispose();
+  }
+
+  // Whatever either model brought along. The arms carry a preview pose and the weapon its
+  // own inspect and reload animations, and none of them is what first person is showing.
+  for (const animation of document.getRoot().listAnimations()) {
+    animation.dispose();
+  }
+
+  // Both models arrived with a buffer of their own, and a .glb is allowed exactly one. Every
+  // accessor is moved onto the first and the rest are dropped, which is a relabelling: the
+  // bytes are rewritten into one blob on the way out either way.
+  const [buffer, ...spare] = document.getRoot().listBuffers();
+  for (const accessor of document.getRoot().listAccessors()) {
+    accessor.setBuffer(buffer);
+  }
+  for (const extra of spare) extra.dispose();
+
+  const bones = nodesByName(document);
+  const clip = await io.read(clipGlb);
+  log(`aligned ${alignRestPose({ from: clip, bones })} bones`);
+  const channels = copyAnimation({
+    into: document,
+    from: clip,
+    name: "idle",
+    bones,
+  });
+
+  await io.write(output, document);
+  return channels;
 };
 
 /**
@@ -582,4 +748,184 @@ export const convertPlayerModel = async ({
   if (cleanup) await rm(workDir, { recursive: true, force: true });
 
   return { path, size, clips };
+};
+
+/**
+ * Borrow the two things a KZ runner carries, and write one small .glb each.
+ *
+ * Far simpler than the body: a weapon is a rigid mesh with no skeleton, no clips and
+ * nothing to merge, so this is borrow, export, shrink. The viewer parents one to the
+ * runner's right hand and another to the camera; see character.js.
+ *
+ * @returns [{ name, path, size }] — one entry per weapon written
+ */
+export const convertWeapons = async ({
+  outputDir,
+  toolsDir = TOOLS_DIR,
+  cs2Dir = CS2_DIR,
+  // Bigger than the body's share of the screen deserves, because in first person the
+  // weapon is the closest thing to the camera and half the picture is its slide.
+  textureSize = 512,
+  cleanup = true,
+  log = () => {},
+}) => {
+  const cli = requireTools(toolsDir);
+
+  await mkdir(outputDir, { recursive: true });
+  await syncCs2Index({ cs2Dir, toolsDir, log });
+
+  log("borrowing the knife and the USP-S from CS2…");
+  await borrowAssets({
+    cs2Dir,
+    toolsDir,
+    cli,
+    roots: Object.values(WEAPONS).map((weapon) => `${weapon.model}_c`),
+    log,
+  });
+
+  const workDir = join(toolsDir, "work", "weapon-models");
+  await rm(workDir, { recursive: true, force: true });
+
+  const written = [];
+  for (const [name, { model, meshes }] of Object.entries(WEAPONS)) {
+    const raw = await exportGlb({
+      cli,
+      cs2Dir,
+      path: model,
+      dir: join(workDir, name),
+      extra: [
+        "--gltf_export_materials",
+        "--gltf_textures_adapt",
+        ...(meshes ? ["--gltf_mesh_list", meshes.join(",")] : []),
+      ],
+    });
+
+    const { path, size } = await packAndPublish({
+      input: raw,
+      outputDir,
+      name,
+      textureSize,
+    });
+    log(`wrote ${path} at ${(size / 1e6).toFixed(2)} MB`);
+    written.push({ name, path, size });
+  }
+
+  if (cleanup) await rm(workDir, { recursive: true, force: true });
+  return written;
+};
+
+/**
+ * Build the two first-person viewmodels: `vm-pistol.glb` and `vm-knife.glb`.
+ *
+ * Each is three things welded together — CS2's shared arms, the weapon, and the idle clip
+ * that poses both — and the welding is what makes it one file the viewer can hang off the
+ * camera and forget about.
+ *
+ * The clip's own skeleton is the key to all of it. It carries the arm bones and the weapon's
+ * bones, under the same names both models use, so one animation drives the hands, the
+ * fingers and the gun's slide together. And it is authored in a space measured from the
+ * camera: with `root_motion` at the origin, the hands land about a foot in front of the eye
+ * and half that below it. Which means the viewer has nothing to tune — the pose is the
+ * placement.
+ *
+ * @returns [{ name, path, size }] — one entry per viewmodel written
+ */
+export const convertViewModels = async ({
+  outputDir,
+  toolsDir = TOOLS_DIR,
+  cs2Dir = CS2_DIR,
+  // The closest thing to the camera in the whole scene, and half the picture in first
+  // person, so it gets more than the body does.
+  textureSize = 1024,
+  cleanup = true,
+  log = () => {},
+}) => {
+  const cli = requireTools(toolsDir);
+
+  await mkdir(outputDir, { recursive: true });
+  await syncCs2Index({ cs2Dir, toolsDir, log });
+
+  log("borrowing the first-person arms and their idle clips from CS2…");
+  await borrowAssets({
+    cs2Dir,
+    toolsDir,
+    cli,
+    roots: [
+      `${ARMS_MODEL}_c`,
+      ...Object.values(VIEW_MODELS).map(({ clip }) => `${clip}.vnmclip_c`),
+    ],
+    log,
+  });
+
+  const workDir = join(toolsDir, "work", "view-models");
+  await rm(workDir, { recursive: true, force: true });
+
+  // The arms are shared, so they are exported once and merged into both files.
+  // --gltf_export_animations again for the reason the body needed it: without it the
+  // exporter writes the meshes and leaves the skeleton behind, and a skinned mesh with no
+  // bones is a puddle at the origin.
+  const armsGlb = await exportGlb({
+    cli,
+    cs2Dir,
+    path: ARMS_MODEL,
+    dir: join(workDir, "arms"),
+    extra: [
+      "--gltf_export_materials",
+      "--gltf_textures_adapt",
+      "--gltf_export_animations",
+    ],
+  });
+
+  const written = [];
+  for (const [name, { weapon, clip }] of Object.entries(VIEW_MODELS)) {
+    const { model, meshes } = WEAPONS[weapon];
+    const exportDir = join(workDir, name);
+
+    // The same weapon file as the one in a runner's hand, but exported with its skeleton
+    // this time: in first person the slide and the hammer are close enough to the camera to
+    // be worth animating, and the clip has channels for them.
+    const weaponGlb = await exportGlb({
+      cli,
+      cs2Dir,
+      path: model,
+      dir: exportDir,
+      extra: [
+        "--gltf_export_materials",
+        "--gltf_textures_adapt",
+        "--gltf_export_animations",
+        ...(meshes ? ["--gltf_mesh_list", meshes.join(",")] : []),
+      ],
+    });
+
+    const clipGlb = await exportGlb({
+      cli,
+      cs2Dir,
+      path: `${clip}.vnmclip`,
+      dir: exportDir,
+    });
+
+    log(`merging the arms, the ${weapon} and ${clip.split("/").pop()}…`);
+    const mergedGlb = join(exportDir, `${name}.merged.glb`);
+    const channels = await mergeViewModel({
+      armsGlb,
+      weaponGlb,
+      clipGlb,
+      output: mergedGlb,
+      log,
+    });
+    log(`${channels} channels drive the arms and the weapon together`);
+
+    const { path, size } = await packAndPublish({
+      input: mergedGlb,
+      outputDir,
+      name,
+      publishAs: `vm-${name}`,
+      textureSize,
+    });
+    log(`wrote ${path} at ${(size / 1e6).toFixed(2)} MB`);
+    written.push({ name, path, size });
+  }
+
+  if (cleanup) await rm(workDir, { recursive: true, force: true });
+  return written;
 };

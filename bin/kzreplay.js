@@ -28,7 +28,11 @@ import {
 } from "../src/config.js";
 import { writeJsonAtomically } from "../src/geometry.js";
 import { convertMap } from "../src/mapPipeline.js";
-import { convertPlayerModel } from "../src/playerModelPipeline.js";
+import {
+  convertPlayerModel,
+  convertViewModels,
+  convertWeapons,
+} from "../src/playerModelPipeline.js";
 import { analyseRun } from "../src/analysis.js";
 import { compareRuns } from "../src/compare.js";
 import { renderComparison } from "../src/report.js";
@@ -282,6 +286,9 @@ const commands = {
       cleanup: !flags["keep-work"],
       log: (message) => console.log(`  ${message}`),
     };
+    const wrote = ({ path, size }) =>
+      console.log(`wrote ${path} (${(size / 1e6).toFixed(2)} MB)`);
+
     const { path, size, clips } = await convertPlayerModel({
       ...options,
       ...(flags["texture-size"]
@@ -289,8 +296,16 @@ const commands = {
         : {}),
     });
 
-    console.log(`\nwrote ${path} (${(size / 1e6).toFixed(2)} MB)`);
+    console.log(`\nwrote ${path} (${(size / 1e6).toFixed(1)} MB)`);
     console.log(`clips: ${clips.join(", ")}`);
+
+    // The knife and the USP-S in the same breath: the character is not much use without
+    // whatever the run's mode says they were holding, and together they are one download.
+    for (const weapon of await convertWeapons(options)) wrote(weapon);
+
+    // And the first-person pair: CS2's own arms holding each of those two, posed by the
+    // game's own viewmodel idle.
+    for (const model of await convertViewModels(options)) wrote(model);
   },
 
   /**
