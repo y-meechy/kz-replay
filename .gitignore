@@ -13,8 +13,13 @@ viewer/public/maps/*.webp
 # The CT character, same as the maps: reproducible with `npm run player-model`, and it is
 # CS2's asset rather than ours, so it does not belong in the repository.
 viewer/public/models/*.glb
-tools/
-viewer/dist/
+
+# No trailing slash on either, so a symlink of the name is ignored as well as a directory.
+# Working on this from a git worktree means linking both in from the main checkout — the
+# tools are hundreds of megabytes and the tracks are generated — and `tools/` matches a
+# directory only, so the links landed in a commit.
+tools
+viewer/public/tracks
 
 # Source2Viewer-CLI drops this next to the repo when a material fails to load.
 exceptions.txt
