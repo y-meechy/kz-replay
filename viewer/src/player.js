@@ -1198,6 +1198,12 @@ export const createPlayer = ({
       }
     }
 
+    // How much every animation advances this frame. Zero when the replay is paused, and that
+    // is the whole of how the runner holds still with it: a paused replay whose runner keeps
+    // jogging on the spot reads as a bug rather than as a pause. Scaled by the playback rate
+    // for the same reason the clock is, so a quarter-speed replay is a quarter-speed stride.
+    const animationDelta = playing ? delta * rate : 0;
+
     const referencePosition = indexAtTime(playbackTime, track);
     const index = Math.round(referencePosition);
 
@@ -1231,7 +1237,7 @@ export const createPlayer = ({
     if (character) {
       character.update({
         position: scratch,
-        delta,
+        delta: animationDelta,
         ...characterStateAt(referencePosition, track),
       });
       // Not in first person: the camera sits inside this body's head, so all it can
@@ -1252,7 +1258,7 @@ export const createPlayer = ({
       if (rivalCharacter) {
         rivalCharacter.update({
           position: rivalScratch,
-          delta,
+          delta: animationDelta,
           ...characterStateAt(rivalPosition, rival.track),
         });
         rivalCharacter.setVisible(
