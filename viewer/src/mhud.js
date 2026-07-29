@@ -4,6 +4,8 @@
 // they are holding, and nothing else. It sits over the run, so anything that is not
 // worth reading sixty times a second belongs in the stats panel instead.
 
+import { JUMP_IMPULSE } from "./jumps.js";
+
 /**
  * A movement key counts as held above this.
  *
@@ -14,25 +16,14 @@
 const KEY_HELD = 0.25;
 
 /**
- * Upward speed that means the runner has just jumped.
- *
- * The jump button alone cannot answer this. CS2 takes jump input between ticks, so
- * a scroll-wheel hop never shows the button held in the per-tick mask at all:
- * measured across the sample replays the mask misses two thirds of the real jumps,
- * including every perf. The impulse is unambiguous, always 286-296 against 100 or
- * less for a runner who simply walked off an edge, and gravity bleeds it away
- * within a few ticks, so testing for it lights the key for a moment on every real
- * jump however it was bound.
- */
-const JUMP_IMPULSE = 250; // units per second, upward
-
-/**
  * The HUD.
  *
  * @param root  the .mhud element from index.html
  */
 export const createMhud = ({ root }) => {
+  const live = root.querySelector(".mhud__live");
   const speedValue = root.querySelector("[data-mhud=speed]");
+  const prespeedValue = root.querySelector("[data-mhud=prespeed]");
   const keyBoxes = Object.fromEntries(
     ["w", "a", "s", "d", "duck", "jump"].map((key) => [
       key,
@@ -52,6 +43,21 @@ export const createMhud = ({ root }) => {
     speedValue.textContent = text;
   };
 
+  // Before the first jump of a run there is no takeoff speed to show, and an
+  // empty line reads better there than a zero the runner never had.
+  const setPrespeed = (prespeed) => {
+    const text = prespeed === null ? "" : `(${Math.round(prespeed)})`;
+    if (shown.prespeed === text) return;
+    shown.prespeed = text;
+    prespeedValue.textContent = text;
+  };
+
+  const setPerf = (perf) => {
+    if (shown.perf === perf) return;
+    shown.perf = perf;
+    live.classList.toggle("is-perf", perf);
+  };
+
   const setKey = (key, held) => {
     if (shown[key] === held) return;
     shown[key] = held;
@@ -68,6 +74,8 @@ export const createMhud = ({ root }) => {
   const update = (frame) => {
     if (!visible) return;
     setSpeed(frame.speed);
+    setPrespeed(frame.prespeed ?? null);
+    setPerf(Boolean(frame.perf));
     setKey("w", frame.forward > KEY_HELD);
     setKey("s", frame.forward < -KEY_HELD);
     setKey("a", frame.left > KEY_HELD);

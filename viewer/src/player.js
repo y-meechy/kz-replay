@@ -12,6 +12,7 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { TRACK_FLAG } from "../../src/track.js";
+import { findJumps, jumpAtTick } from "./jumps.js";
 import {
   analyseTeleports,
   rangesReachedBy,
@@ -220,6 +221,22 @@ const gpuName = (renderer) => {
   return info
     ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL)
     : gl.getParameter(gl.RENDERER);
+};
+
+/**
+ * Jump lists, found once per track and kept for as long as the track is around.
+ * Both the run and its rival are read this way, and a run is scrubbed through
+ * many times, so the pass over the ticks must not happen per frame.
+ */
+const jumpLists = new WeakMap();
+
+const jumpsOf = (track) => {
+  let jumps = jumpLists.get(track);
+  if (!jumps) {
+    jumps = findJumps(track);
+    jumpLists.set(track, jumps);
+  }
+  return jumps;
 };
 
 const isSoftwareRenderer = (name) =>
@@ -1285,6 +1302,9 @@ export const createPlayer = ({
 
     const hudTrack = activeTrack();
     const hudIndex = Math.round(indexAtTime(playbackTime, hudTrack));
+    // The jump the runner is in, which is a lookup rather than a live test so
+    // that scrubbing backwards shows the same jump it showed on the way past.
+    const hudJump = jumpAtTick(jumpsOf(hudTrack), hudIndex);
 
     onFrame?.({
       index,
@@ -1314,6 +1334,8 @@ export const createPlayer = ({
       onGround: (hudTrack.flags[hudIndex] & TRACK_FLAG.ONGROUND) !== 0,
       ducking: (hudTrack.flags[hudIndex] & TRACK_FLAG.DUCKING) !== 0,
       jumping: (hudTrack.flags[hudIndex] & TRACK_FLAG.JUMPING) !== 0,
+      prespeed: hudJump ? hudJump.prespeed : null,
+      perf: hudJump ? hudJump.perf : false,
       teleports: hudTrack.teleports[hudIndex],
       totalTeleports: hudTrack.teleports[hudTrack.count - 1],
       playing,
