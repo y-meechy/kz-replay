@@ -471,6 +471,12 @@ export const convertMap = async ({
       `dropped ${trim.meshesRemoved} foliage meshes (${((trim.trianglesRemoved / Math.max(trim.trianglesBefore, 1)) * 100).toFixed(0)}% of triangles) ` +
         `and ${trim.attributesDropped.length} unused attribute streams`,
     );
+    if (trim.texturesFilledIn?.length) {
+      log(
+        `${trim.texturesFilledIn.length} texture(s) the exporter could not decode ` +
+          `were filled in with neutral grey: ${trim.texturesFilledIn.join(", ")}`,
+      );
+    }
     if (trim.morphTargetsRemoved) {
       log(`dropped ${trim.morphTargetsRemoved} morph targets nothing animates`);
     }
