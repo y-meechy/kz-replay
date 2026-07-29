@@ -18,6 +18,10 @@
 // The one attribute worth keeping besides POSITION is the lightmap UV, when the map's
 // own baked lighting is being shipped with it. See mapLightmap.js.
 
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import sharp from "sharp";
 import { NodeIO, TextureInfo } from "@gltf-transform/core";
 import { dedup, prune } from "@gltf-transform/functions";
 import { colourFor, isInvisibleMaterial } from "./mapColours.js";
@@ -134,6 +138,50 @@ const countTriangles = (primitive) => {
 };
 
 /**
+ * Fill in the textures the exporter promised and never wrote.
+ *
+ * A textured .glb keeps its images beside it as .png files rather than inside itself,
+ * and now and again one of them fails to decode — on kz_grotto it is a tree branch
+ * whose source was a Photoshop file. The .glb still points at it, and a glTF reader
+ * treats a file that is not there as fatal, so one bad leaf took the whole map with
+ * it and the pipeline shipped nothing. Each one is written out as a small neutral
+ * grey image instead: that surface loses its pattern, and the other four hundred
+ * arrive exactly as the mapper made them.
+ */
+const fillInMissingTextures = async (glb) => {
+  const bytes = await readFile(glb);
+  // A .glb is a twelve byte header followed by length-prefixed chunks, the first of
+  // which is the glTF JSON. Read straight out of the file because gltf-transform
+  // cannot get this far without the images it is missing.
+  const jsonLength = bytes.readUInt32LE(12);
+  const gltf = JSON.parse(bytes.subarray(20, 20 + jsonLength).toString("utf8"));
+
+  const beside = dirname(glb);
+  const missing = [];
+  let greyPng = null;
+  for (const image of gltf.images ?? []) {
+    if (!image.uri || image.uri.startsWith("data:")) continue;
+    const file = join(beside, decodeURIComponent(image.uri));
+    if (existsSync(file)) continue;
+    // The same four pixels serve every hole, so it is only ever encoded once.
+    greyPng ??= await sharp({
+      create: {
+        width: 4,
+        height: 4,
+        channels: 3,
+        background: { r: 128, g: 128, b: 128 },
+      },
+    })
+      .png()
+      .toBuffer();
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, greyPng);
+    missing.push(image.uri);
+  }
+  return missing;
+};
+
+/**
  * @returns counts of what was removed, for logging
  */
 export const trimMap = async ({
@@ -158,6 +206,7 @@ export const trimMap = async ({
     withTextures,
     withLightmap: Boolean(lightmap),
   });
+  const texturesFilledIn = withTextures ? await fillInMissingTextures(input) : [];
   const io = new NodeIO();
   const document = await io.read(input);
   const root = document.getRoot();
@@ -387,5 +436,6 @@ export const trimMap = async ({
     untexturedMaterials,
     untexturedSurfaces,
     morphTargetsRemoved,
+    texturesFilledIn,
   };
 };
