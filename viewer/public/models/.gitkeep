@@ -1,0 +1,7 @@
+Keeps this directory in the repository.
+
+`ct.glb` — CS2's counter-terrorist, which the viewer draws the runner as — is
+gitignored for the same two reasons the maps are: it is reproducible from the CLI
+(`npm run player-model`) and it is Valve's asset, not ours. Without this file the
+directory does not exist in a clone, and the viewer's fallback is exercised
+rather than the character.

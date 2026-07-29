@@ -11,6 +11,7 @@
     "fetch": "node bin/kzreplay.js fetch",
     "wrs": "node bin/kzreplay.js wrs",
     "inspect": "node bin/kzreplay.js inspect",
+    "player-model": "node bin/kzreplay.js player-model",
     "dev": "vite viewer",
     "build": "vite build viewer",
     "start": "node server/index.js",

@@ -10,6 +10,9 @@ viewer/public/tracks/*.json
 .DS_Store
 viewer/public/maps/*.glb
 viewer/public/maps/*.webp
+# The CT character, same as the maps: reproducible with `npm run player-model`, and it is
+# CS2's asset rather than ours, so it does not belong in the repository.
+viewer/public/models/*.glb
 tools/
 viewer/dist/
 

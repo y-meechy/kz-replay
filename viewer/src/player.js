@@ -17,28 +17,19 @@ import {
   rangesReachedBy,
   wastedRanges,
 } from "../../src/teleports.js";
+import {
+  CHARACTER_LAYER,
+  createCharacter,
+  disposeCharacterAsset,
+  loadCharacterAsset,
+} from "./character.js";
+import {
+  VRF_UNITS_PER_EXPORTED_METRE,
+  VRF_YAW_CORRECTION,
+} from "./vrfExport.js";
 
 // Source is Z-up and we render Y-up.
 const toWorld = (x, y, z) => [x, z, -y];
-
-// Lining up an exported map with a replay path takes exactly two corrections.
-//
-// 1. Scale. Source2Viewer bakes a 1/39.37 unit conversion into every node matrix
-//    (it treats one Source unit as one inch) while leaving the mesh data itself in
-//    Source units. Scaling the group by 39.37 cancels that, leaving the map at its
-//    true Source size, which is the same space the replay positions live in. Do not
-//    "correct" this to 52.4934, the real 0.75-inch conversion: the job is to match
-//    the exporter, not reality.
-//
-// 2. Yaw. The export ends up turned a quarter turn about the up axis relative to
-//    the replay's coordinates.
-//
-// Both numbers were measured, not assumed: probeGround() casts a ray down from the
-// player's feet on ticks where the replay says they were standing still. With these
-// values the floor is a median of 0 units below the feet. Every other combination
-// of scale, axis order and yaw that was tried is off by 150 units or more.
-const VRF_UNITS_PER_EXPORTED_METRE = 39.37;
-const VRF_YAW_CORRECTION = Math.PI / 2;
 
 // Source units: a player is 72 tall, a standard jump block is 32.
 const EYE_HEIGHT = 64;
@@ -435,6 +426,11 @@ export const createPlayer = ({
   scene.add(routeOutline);
 
   // --- markers -------------------------------------------------------------
+  // The ball is the fallback, not the plan. When models/ct.glb is there the runner is
+  // drawn as CS2's own CT (see character.js) and these are hidden; when it is not — a
+  // checkout that has not run `npm run player-model`, or a deploy whose volume has no
+  // models directory — a white ball on the trail is still a perfectly readable replay,
+  // and it is what this project shipped for its whole life before the character existed.
   const marker = new THREE.Mesh(
     new THREE.SphereGeometry(7, 20, 14),
     new THREE.MeshBasicMaterial({ color: "#ffffff" }),
@@ -473,11 +469,74 @@ export const createPlayer = ({
   let rival = null;
   let pov = "main";
 
+  // --- the runners, as bodies ----------------------------------------------
+  // One download, two clones: the rival's body is the same asset tinted amber, matching
+  // the trail it runs along. Loaded after the scene is already running, so nothing waits
+  // on it — the balls are on screen from the first frame and are swapped out when the
+  // character arrives, or never, if it does not.
+  let characterAsset = null;
+  let character = null;
+  let rivalCharacter = null;
+
+  const buildRivalCharacter = () => {
+    rivalCharacter?.dispose();
+    rivalCharacter = null;
+    if (!characterAsset || !rival) return;
+    rivalCharacter = createCharacter({
+      asset: characterAsset,
+      tint: RIVAL_COLOUR,
+    });
+    scene.add(rivalCharacter.object);
+  };
+
+  loadCharacterAsset().then((asset) => {
+    // A load that finishes after the player has been thrown away has a whole node tree
+    // and its textures to free, and nowhere to put them.
+    if (!asset) return;
+    if (disposed) {
+      disposeCharacterAsset(asset);
+      return;
+    }
+    characterAsset = asset;
+    character = createCharacter({ asset });
+    scene.add(character.object);
+    buildRivalCharacter();
+  });
+
+  /**
+   * Everything about a tick that decides what the body is doing, interpolated where it
+   * can be and read straight off the tick where it cannot.
+   *
+   * Position and yaw are interpolated for the same reason the camera's are — 64 ticks a
+   * second under 144 frames means a body that steps rather than moves. The three flags
+   * are not: they are booleans, and there is nothing between ducked and not.
+   */
+  const characterStateAt = (position, sourceTrack) => {
+    const clamped = THREE.MathUtils.clamp(position, 0, sourceTrack.count - 1);
+    const low = Math.floor(clamped);
+    const high = Math.min(low + 1, sourceTrack.count - 1);
+    const tick = Math.round(clamped);
+    return {
+      // The angle, not viewDirection's vector: that has been through toWorld already, and
+      // recovering an angle from it is a round trip through two axis swaps for nothing.
+      // Pitch is not read at all — see character.js on why a body must not lean.
+      yaw: THREE.MathUtils.degToRad(
+        lerpDegrees(sourceTrack.yaw[low], sourceTrack.yaw[high], clamped - low),
+      ),
+      speed: sourceTrack.speed[tick],
+      verticalSpeed: sourceTrack.verticalSpeed[tick],
+      ducking: (sourceTrack.flags[tick] & TRACK_FLAG.DUCKING) !== 0,
+      onGround: (sourceTrack.flags[tick] & TRACK_FLAG.ONGROUND) !== 0,
+    };
+  };
+
   const setRival = (rivalTrack) => {
     rivalGroup.clear();
     rival = null;
     rivalMarker.visible = false;
     if (!rivalTrack) {
+      // rival is already null, so this frees the body rather than rebuilding it.
+      buildRivalCharacter();
       pov = "main";
       playbackTime = Math.min(playbackTime, activeDuration());
       return;
@@ -501,6 +560,7 @@ export const createPlayer = ({
 
     rival = { track: rivalTrack, points: rivalPoints, line };
     rivalMarker.visible = true;
+    buildRivalCharacter();
   };
 
   const setPov = (next) => {
@@ -567,6 +627,27 @@ export const createPlayer = ({
   const headlight = new THREE.DirectionalLight("#cfe3ff", 1.25);
   headlight.position.set(0, 0.35, 1); // camera space: shines forwards
   headlight.visible = false;
+
+  // The runner's own two lights, which nothing else in the scene can see. Fixed, and
+  // deliberately outside the dimming below: a body has no baked lighting of its own, so
+  // whatever the map brought, the person has to stay legible. See CHARACTER_LAYER.
+  const characterSky = new THREE.HemisphereLight("#b9d2f0", "#1a2233", 1.6);
+  characterSky.layers.set(CHARACTER_LAYER);
+  scene.add(characterSky);
+  const characterSun = new THREE.DirectionalLight("#ffffff", 1.4);
+  characterSun.position.set(0.4, 1, 0.5);
+  characterSun.layers.set(CHARACTER_LAYER);
+  scene.add(characterSun);
+
+  // And one carried by the camera, because the camera is almost always behind the runner
+  // and a light fixed in the world puts their back in shadow — which was the whole of the
+  // problem the first time: a lit map, two dedicated lights on the character, and still a
+  // dark outline, because every one of them was lighting the side nobody was looking at.
+  // Unlike the map's headlight this is on in every camera mode: from orbit the runner is a
+  // small shape a long way off and needs the help more, not less.
+  const characterFill = new THREE.DirectionalLight("#e6f0ff", 1.6);
+  characterFill.position.set(0, 0.3, 1); // camera space: shines forwards
+  characterFill.layers.set(CHARACTER_LAYER);
 
   // A map that brought its own baked lighting does not need four invented lights at
   // full strength as well: at full strength they flood the baked shadows and the map
@@ -844,6 +925,7 @@ export const createPlayer = ({
   camera.position.copy(orbitEye);
 
   camera.add(headlight);
+  camera.add(characterFill);
   scene.add(camera);
 
   const controls = new OrbitControls(camera, canvas);
@@ -1141,8 +1223,21 @@ export const createPlayer = ({
     marker.material.opacity = playbackTime > durationOf(track) ? 0.35 : 1;
     marker.material.transparent = true;
     const guides = showGuides();
-    marker.visible = guides;
+    // The ball only appears when there is no body to draw instead. See the marker
+    // comment above.
+    marker.visible = guides && !character;
     routeOutline.visible = guides;
+
+    if (character) {
+      character.update({
+        position: scratch,
+        delta,
+        ...characterStateAt(referencePosition, track),
+      });
+      // Not in first person: the camera sits inside this body's head, so all it can
+      // possibly draw is the inside of a gas mask.
+      character.setVisible(!(cameraMode === "first-person" && pov === "main"));
+    }
 
     let rivalIndex = null;
     if (rival) {
@@ -1154,7 +1249,18 @@ export const createPlayer = ({
       positionAt(rivalPosition, rivalScratch, rival.track);
       rivalMarker.position.copy(rivalScratch);
       rival.line.geometry.instanceCount = Math.max(1, rivalIndex);
+      if (rivalCharacter) {
+        rivalCharacter.update({
+          position: rivalScratch,
+          delta,
+          ...characterStateAt(rivalPosition, rival.track),
+        });
+        rivalCharacter.setVisible(
+          !(cameraMode === "first-person" && pov === "rival"),
+        );
+      }
     }
+    rivalMarker.visible = Boolean(rival) && !rivalCharacter;
 
     updateCamera(playbackTime);
     resize();
@@ -1374,6 +1480,12 @@ export const createPlayer = ({
       disposed = true;
       sizeObserver.disconnect();
       controls.dispose();
+      // Before the sweep below, and in this order: an instance frees its own cloned
+      // materials and lets its mixer go, and only then is the shared geometry and the
+      // shared set of textures nobody is pointing at any more.
+      character?.dispose();
+      rivalCharacter?.dispose();
+      disposeCharacterAsset(characterAsset);
       renderer.dispose();
       scene.traverse((object) => {
         object.geometry?.dispose?.();
