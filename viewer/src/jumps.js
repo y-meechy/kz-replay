@@ -56,14 +56,14 @@ export const findJumps = (track) => {
     // Walk back over the ground contact this jump left from. Its length is the
     // whole of the perf question.
     let ground = 0;
-    let start = i - 1;
-    while (start >= 0 && onGround(track, start)) {
+    let before = i - 1;
+    while (before >= 0 && onGround(track, before)) {
       ground += 1;
-      start -= 1;
+      before -= 1;
     }
     // Where the ground contact began, or the tick before the impulse when there
     // was no recorded contact at all. Only used to check for a teleport.
-    const landing = ground > 0 ? start + 1 : i - 1;
+    const landing = ground > 0 ? before + 1 : i - 1;
 
     jumps.push({
       tick: i,
