@@ -26,12 +26,15 @@
 const CHECKPOINT_REACH = 64;
 
 /**
- * How far from the landing spot still counts as standing on it, in Source units.
+ * How far apart two positions can be and still be the same spot, in Source units.
  *
- * The runner usually stands on the checkpoint for a moment before setting off, so
- * several ticks in a row sit on the same spot to within quantisation noise. The one
- * that matters is the last of them — the tick they left on — because the erased
- * stretch has to start there for the surviving line to join up cleanly.
+ * Tight, because both things it is asked about are exact. A teleport puts the runner
+ * on the saved coordinates to the unit, so two teleports to one checkpoint land on
+ * the same numbers and the only difference is the track's own quantisation, which is
+ * well under a millimetre. And a runner standing on a checkpoint before setting off
+ * holds one spot for several ticks, so those ticks differ by no more than the same
+ * noise. Anything looser starts calling two nearby checkpoints one, and a jump block
+ * is only 32 units wide.
  */
 const SAME_SPOT = 2;
 
@@ -49,6 +52,20 @@ const distanceTo = (positions, tick, x, y, z) =>
  * on, `to` is the tick they arrived back at it. Both ends are on the checkpoint, so
  * dropping the path between them leaves no gap to look at.
  *
+ * One per teleport, so each failed try comes off the line at the moment the runner
+ * gives up on it. But the tries at one checkpoint are deliberately made to join up
+ * end to end, and that is the difference between skipping them reading as a jump
+ * forward in time and reading as a strobe. A hard section is not failed once, it is
+ * failed over and over — kz_sahara's worst is thirty-one tries at one checkpoint —
+ * and between two tries the runner stands on the checkpoint for a tenth of a second
+ * before going again. Start each try where the runner set off and those tenths of a
+ * second survive: thirty-one of them in a row, thirty-one cuts between near-identical
+ * views of one spot, about five seconds of flicker where there should be one cut. So
+ * a repeat try starts at the tick the last one ended on instead, standing about
+ * included. Nothing is drawn differently, the erased stretches simply meet, and what
+ * is left of a thirty-one try section is the runner leaving the checkpoint and then,
+ * one cut later, the try that worked.
+ *
  * Ranges are in order and never overlap: the search for a checkpoint only ever looks
  * back as far as the previous teleport, because anything before that belongs to an
  * attempt that has already been dealt with.
@@ -64,6 +81,19 @@ export const wastedRanges = (track) => {
     const y = track.positions[tick * 3 + 1];
     const z = track.positions[tick * 3 + 2];
 
+    /**
+     * Whether this is another try at the checkpoint the last teleport landed on.
+     *
+     * Judged arrival against arrival, never arrival against departure: both are
+     * coordinates the game wrote out of the same saved checkpoint, so two tries at
+     * one checkpoint match to the unit, while a checkpoint the runner moved a block
+     * further up the course does not. A departure is the runner walking, and walking
+     * away from one checkpoint quickly looks like standing on the next.
+     */
+    const retry =
+      ranges.at(-1)?.to === attemptStart &&
+      distanceTo(track.positions, attemptStart, x, y, z) <= SAME_SPOT;
+
     let nearest = Infinity;
     for (let back = attemptStart; back < tick; back++) {
       const distance = distanceTo(track.positions, back, x, y, z);
@@ -76,11 +106,15 @@ export const wastedRanges = (track) => {
       continue;
     }
 
-    // The last tick that was still on the spot: where the failed attempt began.
+    // A repeat try runs from the tick the last one ended on, so the two stretches
+    // meet. Otherwise, the last tick that was still on the spot: where the runner
+    // set off from.
     let from = attemptStart;
-    for (let back = attemptStart; back < tick; back++) {
-      if (distanceTo(track.positions, back, x, y, z) <= nearest + SAME_SPOT) {
-        from = back;
+    if (!retry) {
+      for (let back = attemptStart; back < tick; back++) {
+        if (distanceTo(track.positions, back, x, y, z) <= nearest + SAME_SPOT) {
+          from = back;
+        }
       }
     }
 
