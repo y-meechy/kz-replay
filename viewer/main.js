@@ -750,6 +750,9 @@ const openRun = async (
       // around the run sometimes reaches back into a warm-up attempt that ended in
       // one, and rubbing a stretch out of a pro line would be simply wrong.
       trimTeleports: (run.meta.teleports ?? 0) > 0,
+      // How the runner stands: CS2KZ hands out a USP in classic and a knife in vanilla, and
+      // the two are posed differently.
+      mode: run.meta.mode,
     });
     if (import.meta.env.DEV) window.__kzPlayer = player;
 

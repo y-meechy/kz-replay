@@ -22,6 +22,7 @@ import {
   createCharacter,
   disposeCharacterAsset,
   loadCharacterAsset,
+  stanceForMode,
 } from "./character.js";
 import {
   VRF_UNITS_PER_EXPORTED_METRE,
@@ -233,12 +234,18 @@ const isSoftwareRenderer = (name) =>
  *                        altogether. Off by default: the WR feed plays one run after
  *                        another with no controls at all, and a line quietly
  *                        vanishing there is a glitch rather than a feature.
+ * @param mode            which of CS2KZ's two modes this run was set in, "classic" or
+ *                        "vanilla". It decides how the runner stands: a classic run holds
+ *                        a USP, a vanilla one a knife, and the two are posed differently
+ *                        whether or not anything is drawn in their hands. See
+ *                        stanceForMode().
  */
 export const createPlayer = ({
   canvas,
   track,
   onFrame,
   trimTeleports = false,
+  mode = "vanilla",
 }) => {
   const renderer = new THREE.WebGLRenderer({
     canvas,
@@ -477,6 +484,7 @@ export const createPlayer = ({
   let characterAsset = null;
   let character = null;
   let rivalCharacter = null;
+  const stance = stanceForMode(mode);
 
   const buildRivalCharacter = () => {
     rivalCharacter?.dispose();
@@ -485,6 +493,9 @@ export const createPlayer = ({
     rivalCharacter = createCharacter({
       asset: characterAsset,
       tint: RIVAL_COLOUR,
+      // Both runs are on the same course in the same mode — main.js refuses a comparison that
+      // is not — so the rival stands the way this run does.
+      stance,
     });
     scene.add(rivalCharacter.object);
   };
@@ -498,7 +509,7 @@ export const createPlayer = ({
       return;
     }
     characterAsset = asset;
-    character = createCharacter({ asset });
+    character = createCharacter({ asset, stance });
     scene.add(character.object);
     buildRivalCharacter();
   });
@@ -1422,6 +1433,9 @@ export const createPlayer = ({
       mapGroup,
       track,
       positionAt,
+      // A function rather than the body itself: it does not exist until its .glb has
+      // arrived, and a snapshot taken now would be null forever.
+      character: () => character,
     },
     /** Numbers for checking map alignment without eyeballing a screenshot. */
     debug: () => {
