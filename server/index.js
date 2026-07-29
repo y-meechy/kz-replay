@@ -1,15 +1,16 @@
 // The deployed app: static files, one proxy, one scheduler. No framework.
 //
-// Four jobs it does that a static host cannot:
+// Five jobs it does that a static host cannot:
 //
 //   1. Proxy the replay bucket. replays.cs2kz.org is public but sends no CORS
 //      headers, so a browser cannot fetch it directly. This is the one line of
 //      server the whole viewer actually requires.
-//   2. Serve the generated data and the converted map geometry from a writable
-//      volume, so a redeploy does not wipe hours of map conversion.
+//   2. Serve the generated data, the converted map geometry and the CT character
+//      from a writable volume, so a redeploy does not wipe hours of conversion.
 //   3. Count views. The only thing here that is written by visitors rather than by
 //      the nightly job, and the only reason there is any state to lose.
 //   4. Run the nightly refresh: new maps, new records, convert what is missing.
+//   5. Borrow the CT character out of CS2 the first time it is missing.
 //
 // Everything else is the Vite build output, served as files.
 
@@ -21,12 +22,14 @@ import {
   DATA_DIR,
   MAPS_DIR,
   MAPS_JSON,
+  MODELS_DIR,
   REPO_ROOT,
   STATE_DIR,
   WRS_JSON,
 } from "../src/config.js";
 import { buildLatestWorldRecords } from "../src/catalog.js";
 import { writeJsonAtomically } from "../src/geometry.js";
+import { convertPlayerModel } from "../src/playerModelPipeline.js";
 import { refresh } from "../src/refresh.js";
 import { createViewCounter, handleViewsRequest } from "../src/views.js";
 
@@ -217,6 +220,50 @@ const scheduleRefresh = () => {
   }, wait).unref?.();
 };
 
+/**
+ * Borrow the CT character out of CS2, if the volume has not got it.
+ *
+ * Once, on the start that finds it missing, rather than nightly: the file changes when
+ * CS2 does, which is neither nightly nor something this can detect, and building it is
+ * minutes of SteamCMD. Missing is the only case worth acting on, and it is the normal
+ * case exactly once — the volume is seeded from the image the first time it is created,
+ * and this file is in no image at all.
+ *
+ * It holds the same flag as the refresh, for the two reasons the flag exists: both jobs
+ * drive SteamCMD and the Source 2 exporter over the one CS2 cache on the volume, and the
+ * deploy timer reads the flag out of /healthz before it replaces the container.
+ *
+ * Nothing waits on any of this. Until the file lands, player.js draws its white ball.
+ */
+const ensurePlayerModel = async () => {
+  try {
+    await stat(join(MODELS_DIR, "ct.glb"));
+    return;
+  } catch {
+    // Not there, which is the one case this function exists for.
+  }
+
+  if (refreshing) {
+    log("character build skipped: a refresh is already running");
+    return;
+  }
+  refreshing = true;
+  log("character missing, borrowing it out of CS2");
+  try {
+    const { size, clips } = await convertPlayerModel({
+      outputDir: MODELS_DIR,
+      log: (message) => log(`  ${message}`),
+    });
+    log(
+      `character written (${(size / 1e6).toFixed(2)} MB, ${clips.length} clips)`,
+    );
+  } catch (error) {
+    log(`character not built (${error.message}), the viewer keeps its ball`);
+  } finally {
+    refreshing = false;
+  }
+};
+
 /** Is the catalog missing or older than a day? Then build it before serving. */
 const catalogIsStale = async () => {
   try {
@@ -291,11 +338,13 @@ const handle = async (request, response) => {
     return;
   }
 
-  // Generated data and converted geometry live outside the build output, because
-  // they have to survive a redeploy.
+  // Generated data, converted geometry and the borrowed character live outside the
+  // build output, because they have to survive a redeploy. The character is in no
+  // image at all, so this route is the only way the viewer can ever reach it.
   for (const [prefix, directory] of [
     ["/data/", DATA_DIR],
     ["/maps/", MAPS_DIR],
+    ["/models/", MODELS_DIR],
   ]) {
     if (!path.startsWith(prefix)) continue;
     const file = safeJoin(directory, path.slice(prefix.length));
@@ -327,6 +376,7 @@ createServer((request, response) => {
   log(`  app      ${DIST_DIR}`);
   log(`  data     ${DATA_DIR}`);
   log(`  geometry ${MAPS_DIR}`);
+  log(`  models   ${MODELS_DIR}`);
   log(`  state    ${STATE_DIR}`);
   views.load();
   scheduleRefresh();
@@ -335,8 +385,14 @@ createServer((request, response) => {
   // minutes later, and both writes are atomic.
   refreshWorldRecordFeed();
   // A fresh volume has no catalog at all, and the browse page is empty without one.
-  catalogIsStale().then((stale) => {
-    if (stale) runRefresh("catalog was missing or stale");
-    else log("catalog is fresh, waiting for the nightly run");
-  });
+  // The character comes after it, not alongside it: an empty browse page is a broken
+  // site and a missing character is only the old white ball, and the two jobs cannot
+  // run at once anyway, because they share the CS2 cache. The `return` is what makes
+  // it after — without it the chain would not wait for the refresh to finish.
+  catalogIsStale()
+    .then((stale) => {
+      if (stale) return runRefresh("catalog was missing or stale");
+      log("catalog is fresh, waiting for the nightly run");
+    })
+    .then(ensurePlayerModel);
 });

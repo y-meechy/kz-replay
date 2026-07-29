@@ -2,13 +2,13 @@
 
 The production image is a Linux x64, Node 22 Debian container. It includes
 SteamCMD and ValveResourceFormat CLI 19.2 for the nightly map conversion job.
-Generated catalog files, finished maps and the view counter persist on the host at
-`/var/lib/kz-replay`; Steam Workshop downloads and conversion intermediates stay
-inside the replaceable container.
+Generated catalog files, finished maps, the CT character and the view counter
+persist on the host at `/var/lib/kz-replay`; Steam Workshop downloads and
+conversion intermediates stay inside the replaceable container.
 
-Of those three, the view counter (`/var/lib/kz-replay/state/views.json`) is the only
-one that cannot be rebuilt from the CS2KZ API. Back that file up; the rest is
-reproducible.
+Of those four, the view counter (`/var/lib/kz-replay/state/views.json`) is the only
+one that cannot be rebuilt from the CS2KZ API or out of CS2. Back that file up; the
+rest is reproducible.
 
 The site is `demo.kzcomp.com`. The host nginx configuration proxies it to
 `localhost:8081`; Docker publishes that port on loopback only.
@@ -27,6 +27,28 @@ Compose runs exactly one `kz-replay` container and restarts it unless it is
 explicitly stopped. On the first start, bundled `viewer/public/data` and
 `viewer/public/maps` are copied into the persistent volume. An existing target
 directory is never overwritten.
+
+## The CT character
+
+The runner's body is `models/ct.glb`, borrowed out of CS2 rather than built from the
+repository, so it is in no image. The server checks for it on every start and builds
+it when it is not on the volume, which takes a few minutes of SteamCMD and the
+exporter. Nothing waits for it: until it lands, the viewer draws its old white ball.
+
+While that build runs, `/healthz` reports `refreshing: true`, so the auto-deploy
+timer holds off rather than replacing the container mid-conversion. That is also why
+the character is built after the startup catalog refresh and never at the same time:
+both jobs use the one CS2 asset cache in `/var/lib/kz-replay/cs2`.
+
+To rebuild it by hand, delete it and restart, or run the job directly:
+
+```sh
+docker compose -f docker-compose.prod.yml exec kz-replay npm run player-model
+```
+
+That writes to `KZ_MODELS_DIR`, which compose points at `/data/models` on the
+volume. Without that variable the file lands inside the container and the next
+deploy throws it away.
 
 ## Inspect the service
 
@@ -104,7 +126,7 @@ docker compose -f docker-compose.prod.yml ps
 curl --fail --show-error http://127.0.0.1:8081/healthz
 ```
 
-The bind-mounted catalog, converted maps and view counts remain in
+The bind-mounted catalog, converted maps, character and view counts remain in
 `/var/lib/kz-replay`. Do not scale the service above one instance: each instance
 would schedule its own refresh job.
 

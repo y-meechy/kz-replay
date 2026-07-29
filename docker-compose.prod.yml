@@ -11,6 +11,10 @@ services:
       TZ: Europe/Berlin
       KZ_DATA_DIR: /data/catalog
       KZ_MAPS_DIR: /data/maps
+      # The CT character, borrowed out of CS2 on the first start that finds it missing.
+      # On the volume for the same reason as the maps: minutes of SteamCMD and the
+      # exporter, and nothing about it changes between deploys.
+      KZ_MODELS_DIR: /data/models
       # View counts. On the volume, because this is the only data the container
       # cannot rebuild from the API.
       KZ_STATE_DIR: /data/state
