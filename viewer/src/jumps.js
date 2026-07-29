@@ -2,8 +2,8 @@
 //
 // The HUD wants two things a single tick cannot answer: the speed the runner
 // took off with (prespeed) and whether the takeoff was a perf. Both are
-// questions about the ticks *before* the current one, so they are answered in
-// one pass over the track and then looked up by tick.
+// questions about the ticks around the takeoff rather than the current one, so
+// they are answered in one pass over the track and then looked up by tick.
 
 import { TRACK_FLAG } from "../../src/track.js";
 
@@ -33,6 +33,9 @@ const PERF_GROUND_TICKS = 1;
 
 const onGround = (track, i) => (track.flags[i] & TRACK_FLAG.ONGROUND) !== 0;
 
+/** True when no teleport happened between two ticks of the track. */
+const sameTeleport = (track, a, b) => track.teleports[a] === track.teleports[b];
+
 /**
  * Find every jump in a track.
  *
@@ -51,10 +54,7 @@ export const findJumps = (track) => {
     if (!takeoff) continue;
     // A teleport moves the runner, so the speed either side of it is not one
     // continuous jump and nothing about it is worth showing.
-    if (
-      track.teleports[i] !== track.teleports[i - 1] ||
-      track.teleports[i + 1] !== track.teleports[i]
-    ) {
+    if (!sameTeleport(track, i - 1, i) || !sameTeleport(track, i, i + 1)) {
       continue;
     }
 
@@ -79,9 +79,7 @@ export const findJumps = (track) => {
       // the number the runner is chasing. Measured on a WR bhop run it clusters
       // between 263 and 297 against 81 to 383 on the tick before.
       prespeed: track.speed[i + 1],
-      perf:
-        ground <= PERF_GROUND_TICKS &&
-        track.teleports[landing] === track.teleports[i],
+      perf: ground <= PERF_GROUND_TICKS && sameTeleport(track, landing, i),
     });
   }
 
