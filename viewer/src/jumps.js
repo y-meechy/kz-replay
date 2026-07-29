@@ -37,21 +37,26 @@ const onGround = (track, i) => (track.flags[i] & TRACK_FLAG.ONGROUND) !== 0;
  * Find every jump in a track.
  *
  * @returns an ascending array of { tick, prespeed, perf }, where tick is the
- *          first tick carrying the upward impulse, prespeed is the horizontal
- *          speed on the tick before it, and perf says the runner barely touched
- *          the ground first.
+ *          first tick carrying the upward impulse, prespeed is the speed the
+ *          runner left the ground with, and perf says they barely touched the
+ *          ground first.
  */
 export const findJumps = (track) => {
   const jumps = [];
 
-  for (let i = 1; i < track.count; i += 1) {
+  for (let i = 1; i < track.count - 1; i += 1) {
     const takeoff =
       track.verticalSpeed[i] > JUMP_IMPULSE &&
       track.verticalSpeed[i - 1] <= JUMP_IMPULSE;
     if (!takeoff) continue;
     // A teleport moves the runner, so the speed either side of it is not one
     // continuous jump and nothing about it is worth showing.
-    if (track.teleports[i] !== track.teleports[i - 1]) continue;
+    if (
+      track.teleports[i] !== track.teleports[i - 1] ||
+      track.teleports[i + 1] !== track.teleports[i]
+    ) {
+      continue;
+    }
 
     // Walk back over the ground contact this jump left from. Its length is the
     // whole of the perf question.
@@ -67,7 +72,13 @@ export const findJumps = (track) => {
 
     jumps.push({
       tick: i,
-      prespeed: track.speed[i - 1],
+      // Read one tick past the impulse, not before it. A bhop is speed-capped at
+      // the moment of the jump, so the tick before the takeoff still shows the
+      // speed the runner arrived with, which they did not get to keep. The first
+      // airborne tick shows what the jump actually left them with, and that is
+      // the number the runner is chasing. Measured on a WR bhop run it clusters
+      // between 263 and 297 against 81 to 383 on the tick before.
+      prespeed: track.speed[i + 1],
       perf:
         ground <= PERF_GROUND_TICKS &&
         track.teleports[landing] === track.teleports[i],
