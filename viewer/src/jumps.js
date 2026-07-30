@@ -72,18 +72,15 @@ export const findJumps = (track) => {
 
     const perf = ground <= PERF_GROUND_TICKS && sameTeleport(track, landing, i);
 
-    // Which side of the impulse to read the speed from depends on the jump.
-    //
-    // A bhop is speed-capped at the moment of the jump, so the tick before the
-    // takeoff still shows the speed the runner arrived with, which they did not
-    // get to keep — measured on a WR bhop run, 81 to 383 before against 263 to
-    // 297 after. The first airborne tick is the number the runner is chasing.
-    //
-    // A jump off a real ground contact — a longjump — has no cap to dodge, and
-    // there the first airborne tick already carries a sliver of air strafing. The
-    // tick before the impulse is the speed the jump was actually taken with,
-    // which is what a prespeed means on an LJ.
-    const prespeed = perf ? track.speed[i + 1] : track.speed[i - 1];
+    // The takeoff tick's own speed, and no other tick's. A tick's stored speed
+    // is its end-of-tick value, and the bhop cap lands inside the takeoff tick —
+    // checked against the raw pre/post velocities of a WR bhop run, where the
+    // takeoff tick arrives at 347-389 and ends at 288-295. So this tick already
+    // shows the capped speed the jump kept, the tick before still shows speed
+    // the cap took away, and the tick after has added a sliver of air strafing.
+    // On a longjump the cap never fires and this tick equals the one before it,
+    // so the same read is right for both.
+    const prespeed = track.speed[i];
 
     jumps.push({ tick: i, prespeed, perf });
   }
