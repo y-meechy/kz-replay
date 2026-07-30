@@ -13,8 +13,13 @@
 //   8  u32      tick count
 //  12  f32[3]   position origin (world units)
 //  24  f32[3]   position range  (world units)
-//  36  u32      reserved / padding
+//  36  u16      lead-in ticks (breathing room recorded before the timer started)
+//  38  u16      lead-out ticks (breathing room recorded after the timer ended)
 //  40  columns, in COLUMNS order
+//
+// The lead-in and lead-out were both zero in every file written before they
+// existed — the field was reserved padding, always written as zero — so an old
+// track decodes as a run with no breathing room, which is exactly what it is.
 
 import { FL_ONGROUND } from "./ticks.js";
 
@@ -49,18 +54,47 @@ const COLUMNS = [
 const clamp = (value, min, max) =>
   value < min ? min : value > max ? max : value;
 
+/** How much of the recording either side of the timed run a track keeps, in seconds. */
+const PADDING_SECONDS = 3;
+
 /**
- * Turn decoded ticks into a track, trimmed to `startIndex..endIndex`.
+ * Turn decoded ticks into a track, trimmed to `startIndex..endIndex` plus a few
+ * seconds of breathing room either side — the recording usually reaches back
+ * before the timer started and past the finish, and cutting exactly on the
+ * timer makes every replay open mid-stride. The header records how many ticks
+ * of each kind of padding made it in, so the viewer knows where the run itself
+ * begins and ends.
  *
  * Positions are quantised into the run's own bounding box, so precision is
  * ~1/65535 of the run size: well under a millimetre on any real course.
  */
-export const buildTrack = (ticks, bounds, { tickRate = 64 } = {}) => {
+export const buildTrack = (
+  ticks,
+  bounds,
+  { tickRate = 64, paddingSeconds = PADDING_SECONDS } = {},
+) => {
   const from = bounds.startIndex;
   const to = bounds.endIndex;
-  const tickIndices =
+  let tickIndices =
     bounds.tickIndices ??
     Int32Array.from({ length: to - from + 1 }, (_, i) => from + i);
+
+  // Breathing room is raw recorded ticks, straight off the recording: the run
+  // itself may skip paused stretches, but nothing outside the run is timed, so
+  // there is nothing to skip there. Capped by what was actually recorded, and by
+  // what a u16 header field can say.
+  const padTicks = Math.min(Math.round(paddingSeconds * tickRate), 65535);
+  const leadIn = Math.max(Math.min(padTicks, from), 0);
+  const leadOut = Math.max(Math.min(padTicks, ticks.count - 1 - to), 0);
+  if (leadIn || leadOut) {
+    const padded = new Int32Array(leadIn + tickIndices.length + leadOut);
+    for (let i = 0; i < leadIn; i++) padded[i] = from - leadIn + i;
+    padded.set(tickIndices, leadIn);
+    for (let i = 0; i < leadOut; i++) {
+      padded[leadIn + tickIndices.length + i] = to + 1 + i;
+    }
+    tickIndices = padded;
+  }
   const count = tickIndices.length;
 
   if (count < 2) {
@@ -142,6 +176,8 @@ export const buildTrack = (ticks, bounds, { tickRate = 64 } = {}) => {
     view.setFloat32(12 + axis * 4, min[axis], true);
     view.setFloat32(24 + axis * 4, range[axis], true);
   }
+  view.setUint16(36, leadIn, true);
+  view.setUint16(38, leadOut, true);
 
   let offset = HEADER_BYTES;
   for (const [name, Type] of COLUMNS) {
@@ -155,6 +191,9 @@ export const buildTrack = (ticks, bounds, { tickRate = 64 } = {}) => {
       tickCount: count,
       tickRate,
       durationSeconds: (count - 1) / tickRate,
+      leadInSeconds: leadIn / tickRate,
+      leadOutSeconds: leadOut / tickRate,
+      runDurationSeconds: (count - 1 - leadIn - leadOut) / tickRate,
       topSpeed: Math.round(topSpeed),
       bboxMin: min,
       bboxMax: max,
@@ -227,6 +266,15 @@ export const decodeTrack = (buffer) => {
     }
   }
 
+  let leadIn = view.getUint16(36, true);
+  let leadOut = view.getUint16(38, true);
+  if (leadIn + leadOut >= count) {
+    // Padding cannot be the whole track. Treat nonsense as "no breathing room"
+    // rather than refusing a file whose run data is fine.
+    leadIn = 0;
+    leadOut = 0;
+  }
+
   const columns = {};
   let offset = HEADER_BYTES;
   for (const [name, Type] of COLUMNS) {
@@ -253,6 +301,11 @@ export const decodeTrack = (buffer) => {
     tickRate,
     count,
     durationSeconds: (count - 1) / tickRate,
+    // The breathing room either side of the timed run, in ticks. Zero on old
+    // files, so everything downstream can rely on them without checking.
+    leadIn,
+    leadOut,
+    runDurationSeconds: (count - 1 - leadIn - leadOut) / tickRate,
     positions,
     yaw,
     pitch,
