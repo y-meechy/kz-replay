@@ -55,14 +55,6 @@
           <span class="stat__value" id="stat-run">—</span>
         </div>
         <div class="stat">
-          <span class="stat__label">Time</span>
-          <span class="stat__value stat__value--mono" id="stat-time">0.00</span>
-        </div>
-        <div class="stat">
-          <span class="stat__label">Speed</span>
-          <span class="stat__value stat__value--mono" id="stat-speed">0</span>
-        </div>
-        <div class="stat">
           <span class="stat__label">Teleports</span>
           <span class="stat__value stat__value--mono" id="stat-teleports"
             >0</span
@@ -183,6 +175,8 @@
             value="0"
             step="1"
           />
+          <!-- Breathing room shading and the timer's start/stop flags. -->
+          <div class="bounds" id="scrub-bounds"></div>
           <!-- Highlight marks sit under the thumb, so a big swing is visible on the
                timeline itself and can be clicked. -->
           <div class="marks" id="scrub-marks"></div>
@@ -197,8 +191,8 @@
           <button type="button" data-rate="2">2×</button>
         </div>
         <div class="segmented" id="cameras">
-          <button type="button" data-camera="orbit" class="is-active">
-            Orbit
+          <button type="button" data-camera="freecam" class="is-active">
+            Free
           </button>
           <button type="button" data-camera="follow">Follow</button>
           <button type="button" data-camera="first-person">Eyes</button>
@@ -214,35 +208,15 @@
           MHUD
         </button>
         <span class="controls__hint"
-          >space play · ← → step · C camera · M hud</span
+          >space play · ← → step · C camera · M hud · free cam: drag look ·
+          WASD fly · Q/E down/up · shift fast</span
         >
       </footer>
 
       <!-- The movement HUD, in the KZ tradition: bottom centre, over the run, and
-           small enough to read past. Never interactive, so a drag to orbit the
-           camera passes straight through it. -->
-      <div class="mhud" id="mhud">
-        <div class="mhud__live">
-          <div class="mhud__speed">
-            <span class="mhud__speed-value" data-mhud="speed">0</span>
-            <span class="mhud__speed-unit">u/s</span>
-          </div>
-          <!-- The takeoff speed of the last jump, in brackets under the live
-               speed: the number a KZ player is actually chasing. -->
-          <div class="mhud__prespeed" data-mhud="prespeed"></div>
-          <!-- The KZTimer arrangement: crouch and jump flanking W on the top row,
-               A S D underneath. A key that is not held shows as a bar, so the
-               block keeps its shape and only the pressed keys read as letters. -->
-          <div class="mhud__keys">
-            <span class="mhud__key" data-key="duck">C</span>
-            <span class="mhud__key" data-key="w">W</span>
-            <span class="mhud__key" data-key="jump">J</span>
-            <span class="mhud__key" data-key="a">A</span>
-            <span class="mhud__key" data-key="s">S</span>
-            <span class="mhud__key" data-key="d">D</span>
-          </div>
-        </div>
-      </div>
+           small enough to read past. Empty on purpose: mhud.js renders the inside,
+           so the WR feed's copy and this one can never drift apart. -->
+      <div class="mhud" id="mhud"></div>
 
       <div id="analysis-overlay" class="analysis" hidden></div>
       <div id="loading" class="loading">loading run…</div>
@@ -299,8 +273,12 @@
             <td>Behind the runner.</td>
           </tr>
           <tr>
-            <th><code>orbit</code></th>
-            <td>Whole course from outside. Drag to move.</td>
+            <th><code>free</code></th>
+            <td>
+              Fly anywhere. Drag to look, WASD to move, Q/E for down and up,
+              hold Shift to go fast. <code>orbit</code> still works in old
+              links.
+            </td>
           </tr>
         </tbody>
       </table>

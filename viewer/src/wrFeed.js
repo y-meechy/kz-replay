@@ -30,6 +30,7 @@ import { LEADERBOARDS } from "../../src/leaderboards.js";
 import { escapeHtml, formatRunTime, tierLabel, tierStyle } from "./format.js";
 import { createViewTicker, fetchViews, viewsLabel } from "./views.js";
 import { findMapFile } from "./mapFile.js";
+import { createMhud } from "./mhud.js";
 import { createPlayer } from "./player.js";
 
 /** The camera every run in the feed is watched in, as a /watch `view` name. */
@@ -106,7 +107,8 @@ export const createWrFeed = ({ root, getRun, onOpenInPlayer, onBack }) => {
         <div class="reel__subtitle" id="reel-subtitle">loading…</div>
       </div>
     </header>
-    <div class="reel__scroll" id="reel-scroll"></div>`;
+    <div class="reel__scroll" id="reel-scroll"></div>
+    <div class="mhud" id="reel-mhud" hidden></div>`;
 
   const dom = {
     canvas: root.querySelector("#reel-stage"),
@@ -114,6 +116,10 @@ export const createWrFeed = ({ root, getRun, onOpenInPlayer, onBack }) => {
     subtitle: root.querySelector("#reel-subtitle"),
     scroll: root.querySelector("#reel-scroll"),
   };
+
+  // The feed has no toggle for it: a HUD is part of watching a KZ run, so it is
+  // simply on whenever a run is playing.
+  const mhud = createMhud({ root: root.querySelector("#reel-mhud") });
 
   // --- markup ---------------------------------------------------------------
 
@@ -149,7 +155,6 @@ export const createWrFeed = ({ root, getRun, onOpenInPlayer, onBack }) => {
           <button class="button button--primary" type="button" data-open>Open in player</button>
         </div>
       </div>
-      <div class="slide__speed" data-speed hidden><b>0</b><small>u/s</small></div>
       <div class="slide__progress"><i data-bar></i></div>
     </article>`;
 
@@ -160,8 +165,6 @@ export const createWrFeed = ({ root, getRun, onOpenInPlayer, onBack }) => {
       poster: element.querySelector("[data-poster]"),
       status: element.querySelector("[data-status]"),
       views: element.querySelector("[data-views]"),
-      speed: element.querySelector("[data-speed]"),
-      speedValue: element.querySelector("[data-speed] b"),
       bar: element.querySelector("[data-bar]"),
     });
   };
@@ -202,6 +205,7 @@ export const createWrFeed = ({ root, getRun, onOpenInPlayer, onBack }) => {
     player?.dispose();
     player = null;
     playingId = null;
+    mhud.setVisible(false);
     showStageOn(-1);
   };
 
@@ -265,8 +269,7 @@ export const createWrFeed = ({ root, getRun, onOpenInPlayer, onBack }) => {
         const slide = slides.get(index);
         if (!slide) return;
         slide.bar.style.transform = `scaleX(${frame.progress})`;
-        slide.speed.hidden = false;
-        slide.speedValue.textContent = String(frame.speed);
+        mhud.update(frame);
         ticker?.frame(frame);
       },
     });
@@ -276,6 +279,7 @@ export const createWrFeed = ({ root, getRun, onOpenInPlayer, onBack }) => {
     // alignment checks have to be reachable from here as well.
     if (import.meta.env.DEV) window.__kzReelPlayer = player;
     playingId = record.recordId;
+    mhud.setVisible(true);
     showStageOn(index);
     setStatus(index, "");
 

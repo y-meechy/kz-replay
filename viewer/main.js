@@ -7,7 +7,7 @@
 //
 //   /                                          the map list
 //   /wr[?id=<id>]                              the world record feed
-//   /watch?ids=<id>[,<id>]&view=pov|follow|orbit
+//   /watch?ids=<id>[,<id>]&view=pov|follow|free
 //   /docs                                      how to build those links
 //
 // Query parameters rather than path segments because the links are built by other
@@ -41,7 +41,10 @@ const el = (id) => document.getElementById(id);
 const VIEWS = {
   pov: "first-person",
   follow: "follow",
-  orbit: "orbit",
+  // "orbit" first so old links still work but new ones are written as "free" —
+  // VIEW_NAMES keeps the last name it sees for a mode.
+  orbit: "freecam",
+  free: "freecam",
 };
 const VIEW_NAMES = Object.fromEntries(
   Object.entries(VIEWS).map(([name, mode]) => [mode, name]),
@@ -143,8 +146,6 @@ const total = el("total");
 const rates = el("rates");
 const cameras = el("cameras");
 const statRun = el("stat-run");
-const statTime = el("stat-time");
-const statSpeed = el("stat-speed");
 const statTeleports = el("stat-teleports");
 const mapToggle = el("map-toggle");
 const mapStatus = el("map-status");
@@ -165,6 +166,7 @@ const povMain = el("pov-main");
 const povRival = el("pov-rival");
 const activePov = el("active-pov");
 const scrubMarks = el("scrub-marks");
+const scrubBounds = el("scrub-bounds");
 const mapConvert = el("map-convert");
 const watchCompare = el("watch-compare");
 const watchCompareInput = el("watch-compare-id");
@@ -264,10 +266,15 @@ const setMhud = (on) => {
   mhud.setVisible(mhudOn);
 };
 
-/** Seek the playback to a moment, and let it run so the moment plays out. */
+/**
+ * Seek the playback to a moment on the run's clock, and let it run so the moment
+ * plays out. Run clock, not playback clock: every number that reaches here comes
+ * from the analysis, which knows nothing of the breathing room a track keeps
+ * before the timer starts, so the offset is added exactly once, here.
+ */
 const jumpTo = (seconds) => {
   if (!player) return;
-  player.seekToSeconds(seconds);
+  player.seekToSeconds(seconds + player.runStartSeconds());
   player.play();
   showPlaying(true);
 };
@@ -393,6 +400,41 @@ const showPlaying = (playing) => {
 };
 
 /**
+ * Shade the breathing room on the timeline and flag where the timer starts and
+ * stops, so the padded stretches before and after the run read as "not the run".
+ */
+const renderRunBounds = () => {
+  scrubBounds.innerHTML = "";
+  const duration = player?.durationSeconds() ?? 0;
+  if (!duration) return;
+  const start = player.runStartSeconds();
+  const end = player.runEndSeconds();
+  const pct = (seconds) => `${(seconds / duration) * 100}%`;
+
+  const addBreathing = (from, to) => {
+    if (to <= from) return;
+    const span = document.createElement("span");
+    span.className = "is-breathing";
+    span.style.left = pct(from);
+    span.style.width = pct(to - from);
+    scrubBounds.append(span);
+  };
+  addBreathing(0, start);
+  addBreathing(end, duration);
+
+  for (const [seconds, kind, label] of [
+    [start, "is-start", "timer starts"],
+    [end, "is-finish", "timer stops"],
+  ]) {
+    const flag = document.createElement("span");
+    flag.className = `flag ${kind}`;
+    flag.style.left = pct(seconds);
+    flag.title = label;
+    scrubBounds.append(flag);
+  }
+};
+
+/**
  * Marks on the timeline, one per highlighted section, so the stretches that decided
  * the run are visible and reachable without opening anything.
  *
@@ -404,14 +446,18 @@ const renderScrubMarks = (data, duration) => {
   scrubMarks.innerHTML = "";
   if (!data || !duration) return;
 
+  // Section times are on the run's clock; the scrub bar spans the whole playback,
+  // breathing room included, so each mark shifts right by the lead-in.
+  const leadInSeconds = player?.runStartSeconds() ?? 0;
   for (const section of data.highlights) {
     const start =
       selectedPov === "rival" ? section.challengerTime : section.referenceTime;
-    if (start > duration) continue;
+    const markSeconds = start + leadInSeconds;
+    if (markSeconds > duration) continue;
     const mark = document.createElement("button");
     mark.type = "button";
     mark.className = section.secondsLost > 0 ? "is-loss" : "is-gain";
-    mark.style.left = `${(start / duration) * 100}%`;
+    mark.style.left = `${(markSeconds / duration) * 100}%`;
     mark.title =
       `${start.toFixed(2)}s · ` +
       `${section.secondsLost > 0 ? "lost" : "gained"} ` +
@@ -439,9 +485,13 @@ const setText = (node, value) => {
 const updateCompareReadout = (frame) => {
   if (!alignment) return;
   const viewingRival = selectedPov === "rival";
+  // The progress arrays cover the run alone, so they are indexed on the run's own
+  // ticks — the breathing room around it sits outside them and reads as its ends.
+  const progressAt = (progress, runIndex) =>
+    progress[Math.min(Math.max(runIndex, 0), progress.length - 1)] ?? 0;
   const distance = viewingRival
-    ? (alignment.rivalProgress[frame.rivalIndex] ?? 0)
-    : (alignment.referenceProgress[frame.index] ?? 0);
+    ? progressAt(alignment.rivalProgress, frame.rivalRunIndex)
+    : progressAt(alignment.referenceProgress, frame.runIndex);
   const otherTime = timeAtDistance(
     viewingRival ? alignment.referenceProgress : alignment.rivalProgress,
     distance,
@@ -465,8 +515,6 @@ const updateHud = (frame) => {
   // Nothing needs writing into a panel nobody can see, and the next frame fills it
   // in the moment it opens.
   if (statsVisible()) {
-    setText(statTime, `${frame.time.toFixed(2)}s`);
-    setText(statSpeed, `${frame.speed} u/s`);
     setText(statTeleports, `${frame.teleports} / ${frame.totalTeleports}`);
   }
 
@@ -483,9 +531,22 @@ const updateHud = (frame) => {
 
 // --- teleports --------------------------------------------------------------
 
-/** What the run is officially timed at, which is what the controls count up to. */
-const reportedDuration = () =>
-  activeMeta?.reportedTime ?? activeTrack?.durationSeconds ?? 0;
+/**
+ * What a run is officially timed at.
+ *
+ * The record's own time when there is one. Failing that, the timed part of the
+ * track: a track keeps a few seconds of the recording either side of the run, so
+ * its whole length is not the run's time. `durationSeconds` is the last resort,
+ * for a track that reports no run duration at all.
+ */
+const officialTime = (meta, track) =>
+  meta?.reportedTime ??
+  track?.runDurationSeconds ??
+  track?.durationSeconds ??
+  0;
+
+/** What the run on screen is timed at, which is what the controls count up to. */
+const reportedDuration = () => officialTime(activeMeta, activeTrack);
 
 /**
  * The teleport readouts for the run on screen.
@@ -508,6 +569,7 @@ const showTeleportTools = () => {
   if (!showing) {
     skipTpToggle.checked = false;
     player?.setSkipTeleports(false);
+    renderRunBounds();
     return;
   }
 
@@ -518,6 +580,9 @@ const showTeleportTools = () => {
   total.textContent = (
     skipping ? cost.cleanDuration : reportedDuration()
   ).toFixed(2);
+  // Skipping teleports moves both the run's bounds and the whole duration, so the
+  // shading is redrawn along with the numbers.
+  renderRunBounds();
 };
 
 // --- map geometry -----------------------------------------------------------
@@ -583,12 +648,9 @@ const selectPov = (next, { persist = false } = {}) => {
   // The name chip follows the POV: it says who you are watching, not who the link
   // opened on.
   watchRunner.textContent = meta?.player?.name ?? "unknown runner";
-  total.textContent = (
-    meta?.reportedTime ??
-    run?.track.durationSeconds ??
-    0
-  ).toFixed(2);
+  total.textContent = officialTime(meta, run?.track).toFixed(2);
   renderScrubMarks(insights, selectedRunDuration());
+  renderRunBounds();
   analysisPanel.refresh();
 
   if (persist) rewriteUrl();
@@ -734,9 +796,7 @@ const openRun = async (
     clearRival();
 
     statRun.textContent = `${run.meta.map} · ${run.meta.course} · ${run.meta.mode}`;
-    total.textContent = (
-      run.meta.reportedTime ?? run.track.durationSeconds
-    ).toFixed(2);
+    total.textContent = officialTime(run.meta, run.track).toFixed(2);
 
     player = createPlayer({
       canvas: stage,
@@ -776,7 +836,7 @@ const openRun = async (
     showPlaying(true);
     setActiveButton(rates, "rate", "1");
     // Replays are meant to be watched through the runner's eyes, so a link that says
-    // nothing about the camera gets first person. Orbit and Follow stay available
+    // nothing about the camera gets first person. Free and Follow stay available
     // from the controls and from ?view=.
     applyView(view, { persist: false });
     loadMapFor(run.meta, token);

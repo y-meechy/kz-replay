@@ -18,16 +18,42 @@ const KEY_HELD = 0.25;
 /**
  * The HUD.
  *
- * @param root  the .mhud element from index.html
+ * Renders its own markup, because it lives on two pages — the watch page and the
+ * WR feed — and two hand-maintained copies of the same six keys would drift.
+ *
+ * @param root  an empty .mhud element
  */
 export const createMhud = ({ root }) => {
+  root.innerHTML = `
+    <div class="mhud__live">
+      <div class="mhud__speed">
+        <span class="mhud__speed-value" data-mhud="speed">0</span>
+        <span class="mhud__speed-unit">u/s</span>
+      </div>
+      <!-- The takeoff speed of the last jump, in brackets under the live
+           speed: the number a KZ player is actually chasing. -->
+      <div class="mhud__prespeed" data-mhud="prespeed"></div>
+      <!-- The KZTimer arrangement: crouch and jump flanking W on the top row,
+           A S D underneath. A key that is not held shows as a bar, so the
+           block keeps its shape and only the pressed keys read as letters. -->
+      <div class="mhud__keys">
+        <span class="mhud__key" data-key="duck">C</span>
+        <span class="mhud__key" data-key="w">W</span>
+        <span class="mhud__key" data-key="jump">J</span>
+        <span class="mhud__key" data-key="a">A</span>
+        <span class="mhud__key" data-key="s">S</span>
+        <span class="mhud__key" data-key="d">D</span>
+      </div>
+    </div>`;
+
   const live = root.querySelector(".mhud__live");
   const speedValue = root.querySelector("[data-mhud=speed]");
   const prespeedValue = root.querySelector("[data-mhud=prespeed]");
+  // Read off the markup above rather than listing the six keys a second time.
   const keyBoxes = Object.fromEntries(
-    ["w", "a", "s", "d", "duck", "jump"].map((key) => [
-      key,
-      root.querySelector(`[data-key=${key}]`),
+    [...root.querySelectorAll("[data-key]")].map((box) => [
+      box.dataset.key,
+      box,
     ]),
   );
 

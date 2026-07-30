@@ -946,6 +946,45 @@ body {
   z-index: 1;
 }
 
+/* Breathing room on the timeline. The stretches recorded before the timer started
+   and after it stopped are hatched out, and a flag stands where the timer starts
+   and stops. Purely a readout, so it never takes pointer events. */
+.bounds {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.bounds .is-breathing {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 6px;
+  border-radius: 3px;
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.28) 0 3px,
+    transparent 3px 6px
+  );
+}
+
+.bounds .flag {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 2px;
+  height: 16px;
+  border-radius: 1px;
+}
+
+.bounds .is-start {
+  background: var(--ok);
+}
+
+.bounds .is-finish {
+  background: var(--hot);
+}
+
 /* Highlight marks on the timeline. Clickable, but they must not swallow drags of
    the scrubber itself, so only the marks take pointer events. */
 .marks {
@@ -1647,34 +1686,6 @@ body {
   pointer-events: auto;
 }
 
-/* The live speed, in the KZ tradition of a big number and a small unit, kept out
-   of the way of the text at the bottom. */
-.slide__speed {
-  position: absolute;
-  top: 50%;
-  right: 18px;
-  z-index: 2;
-  display: grid;
-  justify-items: end;
-  transform: translateY(-50%);
-  color: #e2e8f0;
-  text-shadow: 0 1px 6px rgba(7, 9, 15, 0.9);
-  pointer-events: none;
-}
-
-.slide__speed b {
-  font-size: 32px;
-  font-weight: 700;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-}
-
-.slide__speed small {
-  color: var(--muted);
-  font-size: 10px;
-  letter-spacing: 0.1em;
-}
-
 .slide__progress {
   position: absolute;
   right: 0;
@@ -1697,10 +1708,6 @@ body {
 
 .slide.is-playing .slide__progress {
   opacity: 1;
-}
-
-.slide:not(.is-playing) .slide__speed {
-  display: none;
 }
 
 /* The way into the feed from the front page. */
@@ -1776,10 +1783,6 @@ body {
 
   .slide__body {
     padding: 60px 14px calc(20px + env(safe-area-inset-bottom));
-  }
-
-  .slide__speed b {
-    font-size: 26px;
   }
 
   .button--feed {

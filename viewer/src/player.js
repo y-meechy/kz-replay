@@ -3,7 +3,6 @@
 // a useEffect that calls createPlayer() and dispose() — no three.js in components.
 
 import * as THREE from "three";
-import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 import { Line2 } from "three/addons/lines/Line2.js";
@@ -38,7 +37,7 @@ const EYE_HEIGHT = 64;
 const DUCKED_EYE_HEIGHT = 46;
 const BLOCK = 32;
 
-export const CAMERA_MODES = ["orbit", "follow", "first-person"];
+export const CAMERA_MODES = ["freecam", "follow", "first-person"];
 
 // A daylight sky, kept dim on purpose. The run is drawn in bright speed colours
 // and the panels over it are dark, so a real midday blue would blow past both.
@@ -468,10 +467,10 @@ export const createPlayer = ({
    * the white ball on them, and the dim outline of the route ahead.
    *
    * Both answer a question you only have while following: which of these lines am I
-   * on, and which way next. Watching from orbit, neither is a question — the whole
-   * course is on screen — and the pair are just clutter over the map, so they are off
-   * unless the camera is riding along or a second run is on screen to be told apart
-   * from the first.
+   * on, and which way next. Watching from the free camera, neither is a question —
+   * the whole course is on screen — and the pair are just clutter over the map, so
+   * they are off unless the camera is riding along or a second run is on screen to
+   * be told apart from the first.
    */
   const showGuides = () => cameraMode === "follow" || Boolean(rival);
 
@@ -671,8 +670,8 @@ export const createPlayer = ({
   // and a light fixed in the world puts their back in shadow — which was the whole of the
   // problem the first time: a lit map, two dedicated lights on the character, and still a
   // dark outline, because every one of them was lighting the side nobody was looking at.
-  // Unlike the map's headlight this is on in every camera mode: from orbit the runner is a
-  // small shape a long way off and needs the help more, not less.
+  // Unlike the map's headlight this is on in every camera mode: from a distant free
+  // camera the runner is a small shape a long way off and needs the help more, not less.
   const characterFill = new THREE.DirectionalLight("#e6f0ff", 1.6);
   characterFill.position.set(0, 0.3, 1); // camera space: shines forwards
   characterFill.layers.set(CHARACTER_LAYER);
@@ -775,11 +774,6 @@ export const createPlayer = ({
         adopted.map = null;
         adoptedBakedLight = true;
       }
-      // A map can finish loading long after the camera settled on the orbit view,
-      // which is where ghosting is on, so match whatever is already in force.
-      adopted.transparent = ghosted === true;
-      adopted.opacity = ghosted === true ? 0.35 : 1;
-      adopted.depthWrite = ghosted !== true;
       adopted.needsUpdate = true;
       adoptedMaterials.set(key, adopted);
     }
@@ -941,28 +935,113 @@ export const createPlayer = ({
     });
 
   // --- cameras -------------------------------------------------------------
-  // Where the orbit camera sits: off to one side and above the run, far enough out
-  // that the whole path fits. Used on start and whenever orbit is re-selected.
-  const orbitEye = new THREE.Vector3(
+  // Where the free camera starts: off to one side and above the run, far enough out
+  // that the whole path fits. Only the starting pose — from there it flies wherever
+  // it is steered, and switching modes hands back whatever pose it was left in.
+  const camera = new THREE.PerspectiveCamera(60, 1, 1, 40000);
+  camera.position.set(
     center.x + span * 0.7,
     bounds.max.y + span * 0.5,
     center.z + span * 0.7,
   );
-
-  const camera = new THREE.PerspectiveCamera(60, 1, 1, 40000);
-  camera.position.copy(orbitEye);
+  camera.lookAt(center);
 
   camera.add(headlight);
   camera.add(characterFill);
   scene.add(camera);
 
-  const controls = new OrbitControls(camera, canvas);
-  controls.target.copy(center);
-  controls.enableDamping = true;
-  controls.dampingFactor = 0.08;
-  controls.maxDistance = span * 6;
+  let cameraMode = "freecam";
 
-  let cameraMode = "orbit";
+  // --- freecam -------------------------------------------------------------
+  // Drag to look, WASD to fly, Q/E for down/up, Shift to go fast. Space is
+  // already play/pause and the arrows already scrub, so vertical goes on Q/E
+  // rather than the keys a game would use.
+  //
+  // YXZ order so yaw is applied level and pitch after it — drag left-right and
+  // the horizon stays flat, which is what hand-steered cameras are expected to
+  // do. Free rotation order rolls the camera a little on every diagonal drag.
+  const freecamEuler = new THREE.Euler(0, 0, 0, "YXZ");
+  freecamEuler.setFromQuaternion(camera.quaternion);
+  const freecamKeys = new Set();
+  const freecamMove = new THREE.Vector3();
+  // Sized to the course so one held key crosses a small map in a couple of
+  // seconds and a big one does not take a minute.
+  const freecamSpeed = span * 0.4;
+  // Radians of turn per pixel dragged, and how much Shift multiplies the flying.
+  const LOOK_PER_PIXEL = 0.004;
+  const SHIFT_MULTIPLIER = 3;
+  // Stopped a hair short of straight up and straight down, where a YXZ camera
+  // has no yaw left to speak of and the view snaps around.
+  const PITCH_LIMIT = Math.PI / 2 - 0.01;
+  let freecamDragging = false;
+  let lastPointerX = 0;
+  let lastPointerY = 0;
+
+  const onPointerDown = (event) => {
+    if (cameraMode !== "freecam" || event.button !== 0) return;
+    freecamDragging = true;
+    lastPointerX = event.clientX;
+    lastPointerY = event.clientY;
+    canvas.setPointerCapture(event.pointerId);
+  };
+  const onPointerMove = (event) => {
+    if (!freecamDragging) return;
+    freecamEuler.y -= (event.clientX - lastPointerX) * LOOK_PER_PIXEL;
+    freecamEuler.x = THREE.MathUtils.clamp(
+      freecamEuler.x - (event.clientY - lastPointerY) * LOOK_PER_PIXEL,
+      -PITCH_LIMIT,
+      PITCH_LIMIT,
+    );
+    lastPointerX = event.clientX;
+    lastPointerY = event.clientY;
+    camera.quaternion.setFromEuler(freecamEuler);
+  };
+  const onPointerUp = () => {
+    freecamDragging = false;
+  };
+  // A held key belongs to the camera only while the page itself has the focus:
+  // typing an id into a field must not fly it off.
+  const isTyping = (event) =>
+    event.target instanceof HTMLElement &&
+    event.target.matches("input, textarea, select");
+  const onKeyDown = (event) => {
+    if (isTyping(event)) return;
+    freecamKeys.add(event.code);
+  };
+  const onKeyUp = (event) => {
+    freecamKeys.delete(event.code);
+  };
+  // Keys held as the window loses focus never report their keyup, which would
+  // leave the camera flying on its own.
+  const onBlur = () => {
+    freecamKeys.clear();
+  };
+  canvas.addEventListener("pointerdown", onPointerDown);
+  canvas.addEventListener("pointermove", onPointerMove);
+  canvas.addEventListener("pointerup", onPointerUp);
+  canvas.addEventListener("pointercancel", onPointerUp);
+  window.addEventListener("keydown", onKeyDown);
+  window.addEventListener("keyup", onKeyUp);
+  window.addEventListener("blur", onBlur);
+
+  const flyFreecam = (delta) => {
+    const held = (code) => freecamKeys.has(code);
+    const axis = (positive, negative) =>
+      (held(positive) ? 1 : 0) - (held(negative) ? 1 : 0);
+    // Camera space: x right, y up, z back, so W is negative z.
+    freecamMove.set(
+      axis("KeyD", "KeyA"),
+      axis("KeyE", "KeyQ"),
+      axis("KeyS", "KeyW"),
+    );
+    if (freecamMove.lengthSq() === 0) return;
+    const fast = held("ShiftLeft") || held("ShiftRight") ? SHIFT_MULTIPLIER : 1;
+    freecamMove
+      .normalize()
+      .multiplyScalar(freecamSpeed * fast * delta)
+      .applyQuaternion(camera.quaternion);
+    camera.position.add(freecamMove);
+  };
 
   const followOffset = new THREE.Vector3();
   const scratch = new THREE.Vector3();
@@ -1084,6 +1163,33 @@ export const createPlayer = ({
     onCleanClock(sourceTrack)
       ? teleports.cleanDuration
       : (sourceTrack.count - 1) / sourceTrack.tickRate;
+
+  // --- the run clock ---------------------------------------------------------
+  // A track keeps a few seconds of the recording either side of the timed run
+  // (track.leadIn / track.leadOut, see src/track.js), so playback covers more
+  // than the run and the tick a moment lands on is not its run time. The clock
+  // shown anywhere is run time: zero on the timer's start, negative in the
+  // breathing room before it. On the clean clock the lead-in is measured in kept
+  // ticks, since that is the clock's own unit.
+  //
+  // decodeTrack always reports both, zero on a file written before the padding
+  // existed, so the fallbacks below are only for a track object assembled by hand —
+  // a test, or a poke from the console.
+  const leadInOf = (sourceTrack) => sourceTrack.leadIn ?? 0;
+  const leadOutOf = (sourceTrack) => sourceTrack.leadOut ?? 0;
+
+  const runStartSeconds = (sourceTrack) =>
+    (onCleanClock(sourceTrack)
+      ? teleports.keptBefore[leadInOf(sourceTrack)]
+      : leadInOf(sourceTrack)) / sourceTrack.tickRate;
+  const runEndSeconds = (sourceTrack) => {
+    const lastRunTick = sourceTrack.count - 1 - leadOutOf(sourceTrack);
+    return (
+      (onCleanClock(sourceTrack)
+        ? teleports.keptBefore[lastRunTick]
+        : lastRunTick) / sourceTrack.tickRate
+    );
+  };
   const activeTrack = () => (pov === "rival" && rival ? rival.track : track);
   const activeDuration = () => durationOf(activeTrack());
   const indexAtTime = (seconds, sourceTrack) =>
@@ -1140,24 +1246,6 @@ export const createPlayer = ({
     resolution.set(width, height);
   };
 
-  // Caves and indoor maps bury the overview camera inside solid rock. Ghosting the
-  // geometry in the orbit view lets the run show through, while the inside cameras
-  // keep it solid where you actually want walls to look like walls. Only touched on
-  // change: flipping `transparent` rebuilds the shader.
-  let ghosted = null;
-  const setGhosted = (next) => {
-    if (ghosted === next) return;
-    ghosted = next;
-    // A coloured map is drawn with its own materials, so ghosting has to reach all
-    // of them, not just the plain one.
-    for (const material of [mapMaterial, ...adoptedMaterials.values()]) {
-      material.transparent = next;
-      material.opacity = next ? 0.35 : 1;
-      material.depthWrite = !next;
-      material.needsUpdate = true;
-    }
-  };
-
   // Rebuilding the projection matrix is only needed when the field of view actually
   // changes, which is on a camera switch, not on every one of a hundred frames.
   const setFov = (value) => {
@@ -1166,18 +1254,15 @@ export const createPlayer = ({
     camera.updateProjectionMatrix();
   };
 
-  const updateCamera = (seconds) => {
-    headlight.visible = cameraMode !== "orbit" && mapGroup.visible;
-    setGhosted(cameraMode === "orbit");
+  const updateCamera = (seconds, delta) => {
+    headlight.visible = mapGroup.visible;
 
-    if (cameraMode === "orbit") {
+    if (cameraMode === "freecam") {
       setFov(60);
-      controls.enabled = true;
-      controls.update();
+      flyFreecam(delta);
       return;
     }
 
-    controls.enabled = false;
     const cameraTrack = activeTrack();
     const index = indexAtTime(seconds, cameraTrack);
     positionAt(index, scratch, cameraTrack);
@@ -1205,10 +1290,13 @@ export const createPlayer = ({
   };
 
   const setCameraMode = (mode) => {
-    cameraMode = CAMERA_MODES.includes(mode) ? mode : "orbit";
-    if (cameraMode === "orbit") {
-      controls.target.copy(center);
-      camera.position.copy(orbitEye);
+    cameraMode = CAMERA_MODES.includes(mode) ? mode : "freecam";
+    if (cameraMode === "freecam") {
+      // Pick up flying from wherever the last mode left the camera — coming out
+      // of follow or first person, that is right at the runner, which is where
+      // the eye already is. Only the aim needs syncing, since the ridden modes
+      // steer the camera without going through the freecam's euler.
+      freecamEuler.setFromQuaternion(camera.quaternion);
     }
     return cameraMode;
   };
@@ -1254,7 +1342,7 @@ export const createPlayer = ({
     positionAt(referencePosition, scratch);
     marker.position.copy(scratch);
     // Held at the finish rather than hidden, so you can see the gap open up.
-    marker.material.opacity = playbackTime > durationOf(track) ? 0.35 : 1;
+    marker.material.opacity = playbackTime > runEndSeconds(track) ? 0.35 : 1;
     marker.material.transparent = true;
     const guides = showGuides();
     // The ball only appears when there is no body to draw instead. See the marker
@@ -1296,7 +1384,7 @@ export const createPlayer = ({
     }
     rivalMarker.visible = Boolean(rival) && !rivalCharacter;
 
-    updateCamera(playbackTime);
+    updateCamera(playbackTime, delta);
     resize();
     renderer.render(scene, camera);
 
@@ -1309,19 +1397,26 @@ export const createPlayer = ({
     onFrame?.({
       index,
       rivalIndex,
-      referenceTime: index / track.tickRate,
-      referenceFinished: playbackTime > durationOf(track),
-      rivalFinished: rival ? playbackTime > durationOf(rival.track) : false,
-      finished: playbackTime > durationOf(hudTrack),
+      // Where each runner is, counted from where their run starts rather than
+      // from where their recording does — what the analysis arrays are indexed by.
+      runIndex: index - leadInOf(track),
+      rivalRunIndex:
+        rivalIndex === null ? null : rivalIndex - leadInOf(rival.track),
+      referenceTime: (index - leadInOf(track)) / track.tickRate,
+      referenceFinished: playbackTime > runEndSeconds(track),
+      rivalFinished: rival ? playbackTime > runEndSeconds(rival.track) : false,
+      finished: playbackTime > runEndSeconds(hudTrack),
       gapToRival:
         rivalIndex === null
           ? null
           : Math.round(marker.position.distanceTo(rivalMarker.position)),
       // On the clean route the clock is the playback's own, not the recording's:
-      // the point of skipping is that the failed attempts do not count.
+      // the point of skipping is that the failed attempts do not count. Either
+      // way it is run time: negative while the breathing room before the start
+      // plays, zero the tick the timer went.
       time: onCleanClock(hudTrack)
-        ? playbackTime
-        : hudIndex / hudTrack.tickRate,
+        ? playbackTime - runStartSeconds(hudTrack)
+        : hudIndex / hudTrack.tickRate - runStartSeconds(hudTrack),
       progress: THREE.MathUtils.clamp(
         playbackTime / (activeDuration() || 1),
         0,
@@ -1498,6 +1593,16 @@ export const createPlayer = ({
     seekToSeconds: (value) => {
       playbackTime = THREE.MathUtils.clamp(value, 0, activeDuration());
     },
+    /**
+     * Where on the playback clock the watched run's timer starts. Zero on a track
+     * with no breathing room, so callers can add it unconditionally to turn a
+     * run-clock moment into a playback one.
+     */
+    runStartSeconds: () => runStartSeconds(activeTrack()),
+    /** Where on the playback clock the watched run's timer stops. */
+    runEndSeconds: () => runEndSeconds(activeTrack()),
+    /** The whole playback, breathing room included. */
+    durationSeconds: () => activeDuration(),
     seekToProgress: (fraction) => {
       playbackTime = THREE.MathUtils.clamp(fraction, 0, 1) * activeDuration();
     },
@@ -1530,7 +1635,13 @@ export const createPlayer = ({
     dispose: () => {
       disposed = true;
       sizeObserver.disconnect();
-      controls.dispose();
+      canvas.removeEventListener("pointerdown", onPointerDown);
+      canvas.removeEventListener("pointermove", onPointerMove);
+      canvas.removeEventListener("pointerup", onPointerUp);
+      canvas.removeEventListener("pointercancel", onPointerUp);
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
       // Before the sweep below, and in this order: an instance frees its own cloned
       // materials and lets its mixer go, and only then is the shared geometry and the
       // shared set of textures nobody is pointing at any more.
