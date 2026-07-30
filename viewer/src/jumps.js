@@ -70,16 +70,23 @@ export const findJumps = (track) => {
     // was no recorded contact at all. Only used to check for a teleport.
     const landing = ground > 0 ? before + 1 : i - 1;
 
+    const perf = ground <= PERF_GROUND_TICKS && sameTeleport(track, landing, i);
+
     jumps.push({
       tick: i,
-      // Read one tick past the impulse, not before it. A bhop is speed-capped at
-      // the moment of the jump, so the tick before the takeoff still shows the
-      // speed the runner arrived with, which they did not get to keep. The first
-      // airborne tick shows what the jump actually left them with, and that is
-      // the number the runner is chasing. Measured on a WR bhop run it clusters
-      // between 263 and 297 against 81 to 383 on the tick before.
-      prespeed: track.speed[i + 1],
-      perf: ground <= PERF_GROUND_TICKS && sameTeleport(track, landing, i),
+      // Which side of the impulse to read the speed from depends on the jump.
+      //
+      // A bhop is speed-capped at the moment of the jump, so the tick before the
+      // takeoff still shows the speed the runner arrived with, which they did not
+      // get to keep — measured on a WR bhop run, 81 to 383 before against 263 to
+      // 297 after. The first airborne tick is the number the runner is chasing.
+      //
+      // A jump off a real ground contact — a longjump — has no cap to dodge, and
+      // there the first airborne tick already carries a sliver of air strafing.
+      // The tick before the impulse is the speed the jump was actually taken
+      // with, which is what a prespeed means on an LJ.
+      prespeed: perf ? track.speed[i + 1] : track.speed[i - 1],
+      perf,
     });
   }
 
