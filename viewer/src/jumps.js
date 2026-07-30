@@ -1,9 +1,10 @@
 // Every jump in a run, found once when the track is first read.
 //
-// The HUD wants two things a single tick cannot answer: the speed the runner
-// took off with (prespeed) and whether the takeoff was a perf. Both are
-// questions about the ticks around the takeoff rather than the current one, so
-// they are answered in one pass over the track and then looked up by tick.
+// The HUD wants two things the tick being drawn cannot answer: the speed the
+// runner took off with (prespeed) and whether the takeoff was a perf. Both
+// belong to the takeoff tick, which is usually some way behind the playhead, and
+// the perf answer needs the ticks around it, so they are worked out in one pass
+// over the track and then looked up by tick.
 
 import { TRACK_FLAG } from "../../src/track.js";
 
