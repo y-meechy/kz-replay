@@ -17,6 +17,7 @@
     "start": "node server/index.js",
     "serve": "node server/index.js",
     "refresh": "node bin/kzreplay.js refresh",
+    "test": "node --test src/*.test.js",
     "check": "node scripts/check-alignment.js",
     "format": "prettier --write \"{src,bin,viewer,scripts}/**/*.{js,html,css}\""
   },

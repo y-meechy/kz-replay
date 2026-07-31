@@ -25,7 +25,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import sharp from "sharp";
@@ -55,6 +55,44 @@ const GLTF_TRANSFORM = join(
 // The exporter and the compressor both print a lot; the default 1 MB pipe buffer
 // overflows and the step fails with a maxBuffer error instead of a real one.
 const BIG_OUTPUT = { maxBuffer: 64 * 1024 * 1024 };
+
+const MAP_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+const WORKSHOP_ID_PATTERN = /^\d+$/;
+
+const validateMapName = (mapName) => {
+  if (typeof mapName !== "string" || !MAP_NAME_PATTERN.test(mapName)) {
+    throw new TypeError(
+      "mapName must be a non-empty map identifier containing only letters, digits, underscores, or hyphens",
+    );
+  }
+};
+
+const validateWorkshopId = (workshopId) => {
+  if (typeof workshopId !== "string" || !WORKSHOP_ID_PATTERN.test(workshopId)) {
+    throw new TypeError("workshopId must contain digits only");
+  }
+};
+
+export const validateMapConversionInput = ({ mapName, workshopId }) => {
+  validateMapName(mapName);
+  validateWorkshopId(workshopId);
+};
+
+/**
+ * Resolve a path below a caller-selected root and assert that it stays there.
+ *
+ * The identifier checks already prevent traversal through mapName/workshopId.
+ * Keeping the containment check next to every output/destructive path makes that
+ * safety property explicit if those names are ever loosened in the future.
+ */
+const containedPath = (root, ...parts) => {
+  const resolvedRoot = resolve(root);
+  const path = resolve(resolvedRoot, ...parts);
+  if (path !== resolvedRoot && !path.startsWith(`${resolvedRoot}${sep}`)) {
+    throw new Error(`path escapes its configured root: ${path}`);
+  }
+  return path;
+};
 
 /**
  * What the compressor should do with the images in the file, if it has any.
@@ -105,10 +143,12 @@ export const validateGlb = async (path) => {
 };
 
 const temporaryGlbPath = (outputDir, mapName) =>
-  join(outputDir, `.${mapName}.tmp.glb`);
+  containedPath(outputDir, `.${mapName}.tmp.glb`);
 
-export const cleanupTemporaryGlb = (outputDir, mapName) =>
-  rm(temporaryGlbPath(outputDir, mapName), { force: true });
+export const cleanupTemporaryGlb = (outputDir, mapName) => {
+  validateMapName(mapName);
+  return rm(temporaryGlbPath(outputDir, mapName), { force: true });
+};
 
 const requireTool = (path, name, hint) => {
   if (!existsSync(path)) {
@@ -118,8 +158,9 @@ const requireTool = (path, name, hint) => {
 };
 
 /** Where steamcmd puts a downloaded workshop item. Depends on its install dir. */
-const workshopContentDir = (steamcmdRoot, workshopId) =>
-  join(
+const workshopContentDir = (steamcmdRoot, workshopId) => {
+  validateWorkshopId(workshopId);
+  return containedPath(
     steamcmdRoot,
     "steamapps",
     "workshop",
@@ -127,18 +168,25 @@ const workshopContentDir = (steamcmdRoot, workshopId) =>
     STEAMCMD_APP_ID,
     workshopId,
   );
+};
 
 const cleanupConversionArtifacts = async ({
   mapName,
   workshopId,
   toolsDir,
 }) => {
-  const workDir = join(toolsDir, "work");
-  const steamRoot = join(toolsDir, "steam-workshop");
+  const workDir = containedPath(toolsDir, "work");
+  const steamRoot = containedPath(toolsDir, "steam-workshop");
   await Promise.all([
-    rm(join(workDir, "export", mapName), { recursive: true, force: true }),
-    rm(join(workDir, "maps", `${mapName}.vpk`), { force: true }),
-    rm(join(workDir, "content", mapName), { recursive: true, force: true }),
+    rm(containedPath(workDir, "export", mapName), {
+      recursive: true,
+      force: true,
+    }),
+    rm(containedPath(workDir, "maps", `${mapName}.vpk`), { force: true }),
+    rm(containedPath(workDir, "content", mapName), {
+      recursive: true,
+      force: true,
+    }),
     rm(workshopContentDir(steamRoot, workshopId), {
       recursive: true,
       force: true,
@@ -210,6 +258,8 @@ export const convertMap = async ({
   // to go to `<map>.textured.glb` so the experiment could be thrown away by deleting
   // files, but the viewer only ever looks for `<map>.glb`, so the flag produced a file
   // nothing could load.
+  validateMapConversionInput({ mapName, workshopId });
+
   let temporaryOutput = null;
   try {
     await mkdir(outputDir, { recursive: true });
@@ -226,8 +276,8 @@ export const convertMap = async ({
       "Run npm install before converting maps.",
     );
 
-    const workDir = join(toolsDir, "work");
-    const steamRoot = join(toolsDir, "steam-workshop");
+    const workDir = containedPath(toolsDir, "work");
+    const steamRoot = containedPath(toolsDir, "steam-workshop");
     await mkdir(workDir, { recursive: true });
 
     // 1 + 2. Download the workshop item.
@@ -288,31 +338,34 @@ export const convertMap = async ({
     // materials and zero textures, which is exactly how this looked when the
     // conclusion was "the textures are not in the workshop item". They are; the
     // exporter just could not see them.
-    const contentRoot = join(workDir, "content", mapName);
-    const gameDir = join(contentRoot, "game", "csgo");
+    const contentRoot = containedPath(workDir, "content", mapName);
+    const gameDir = containedPath(contentRoot, "game", "csgo");
     let innerVpk;
     if (withTextures) {
       log("extracting the workshop item's maps, materials and models…");
       await rm(contentRoot, { recursive: true, force: true });
       await run(
         cli,
-        ["-i", join(itemDir, outerVpk), "-o", gameDir],
+        ["-i", containedPath(itemDir, outerVpk), "-o", gameDir],
         BIG_OUTPUT,
       );
       await syncCs2Index({ cs2Dir, toolsDir, log });
-      await copyFile(cs2GameInfoPath(cs2Dir), join(gameDir, "gameinfo.gi"));
-      innerVpk = join(gameDir, "maps", `${mapName}.vpk`);
+      await copyFile(
+        cs2GameInfoPath(cs2Dir),
+        containedPath(gameDir, "gameinfo.gi"),
+      );
+      innerVpk = containedPath(gameDir, "maps", `${mapName}.vpk`);
     } else {
       log("extracting the inner map vpk…");
       await run(cli, [
         "-i",
-        join(itemDir, outerVpk),
+        containedPath(itemDir, outerVpk),
         "-o",
         workDir,
         "-f",
         `maps/${mapName}.vpk`,
       ]);
-      innerVpk = join(workDir, "maps", `${mapName}.vpk`);
+      innerVpk = containedPath(workDir, "maps", `${mapName}.vpk`);
     }
     if (!existsSync(innerVpk)) {
       throw new Error(
@@ -369,7 +422,7 @@ export const convertMap = async ({
         ? "exporting world geometry and materials to glTF…"
         : "exporting world geometry to glTF…",
     );
-    const exportDir = join(workDir, "export", mapName);
+    const exportDir = containedPath(workDir, "export", mapName);
     await rm(exportDir, { recursive: true, force: true });
     await run(
       cli,
@@ -390,7 +443,7 @@ export const convertMap = async ({
       BIG_OUTPUT,
     );
 
-    const raw = join(exportDir, "maps", mapName, "world.glb");
+    const raw = containedPath(exportDir, "maps", mapName, "world.glb");
     if (!existsSync(raw)) {
       throw new Error(`the exporter produced no world.glb for ${mapName}`);
     }
@@ -458,7 +511,7 @@ export const convertMap = async ({
     }
 
     log("trimming attributes and foliage…");
-    const trimmed = join(exportDir, "world.trimmed.glb");
+    const trimmed = containedPath(exportDir, "world.trimmed.glb");
     const trim = await trimMap({
       input: raw,
       output: trimmed,
@@ -523,7 +576,7 @@ export const convertMap = async ({
 
     let best = null;
     for (const [index, attempt] of attempts.entries()) {
-      const candidate = join(exportDir, `world.opt${index}.glb`);
+      const candidate = containedPath(exportDir, `world.opt${index}.glb`);
       await run(
         optimizer,
         [
@@ -582,7 +635,7 @@ export const convertMap = async ({
       );
     }
 
-    const final = join(outputDir, `${mapName}.glb`);
+    const final = containedPath(outputDir, `${mapName}.glb`);
     temporaryOutput = temporaryGlbPath(outputDir, mapName);
     await copyFile(best?.path ?? raw, temporaryOutput);
     await validateGlb(temporaryOutput);
@@ -593,7 +646,7 @@ export const convertMap = async ({
     // put it behind. The viewer treats a missing one as "no sky for this map".
     // The baked lighting, when the .glb could not carry it. Same reasoning as the sky:
     // a sibling file, and the viewer treating a missing one as "not lit".
-    const lightPath = join(outputDir, `${mapName}.light.webp`);
+    const lightPath = containedPath(outputDir, `${mapName}.light.webp`);
     // Only when it reaches something. A map can have a lightmap set and no surface that
     // addresses it — kz_dojo's reaches none of its 205 — and shipping 200 KB of atlas
     // that nothing can look up is both waste and a trap: the viewer used to attach it to
@@ -608,7 +661,7 @@ export const convertMap = async ({
       await rm(lightPath, { force: true });
     }
 
-    const skyPath = join(outputDir, `${mapName}.sky.webp`);
+    const skyPath = containedPath(outputDir, `${mapName}.sky.webp`);
     if (sky) {
       await writeFile(skyPath, sky.webp);
     } else if (withSky) {

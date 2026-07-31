@@ -587,7 +587,11 @@ const showTeleportTools = () => {
 
 // --- map geometry -----------------------------------------------------------
 
-const loadMapFor = async (meta, token) => {
+const loadMapFor = async (meta, token, intendedPlayer) => {
+  const isCurrent = () =>
+    token === loadToken && player === intendedPlayer && intendedPlayer !== null;
+  if (!isCurrent()) return;
+
   mapToggle.disabled = true;
   mapToggle.checked = false;
   mapConvert.hidden = true;
@@ -599,6 +603,8 @@ const loadMapFor = async (meta, token) => {
 
   mapStatus.textContent = "checking…";
   const file = await findMapFile(`/maps/${meta.map}.glb`);
+  if (!isCurrent()) return;
+
   if (!file) {
     mapStatus.textContent = "not converted yet";
     // Only the dev server can convert: it needs steamcmd and the Valve tools.
@@ -613,15 +619,15 @@ const loadMapFor = async (meta, token) => {
 
   mapStatus.textContent = `loading ${file.megabytes.toFixed(1)} MB…`;
   try {
-    const { triangles } = await player.loadMap(file.url);
-    if (token !== loadToken) return;
+    const { triangles } = await intendedPlayer.loadMap(file.url);
+    if (!isCurrent()) return;
+
     mapToggle.disabled = false;
     mapToggle.checked = true;
     mapStatus.textContent = `${(triangles / 1000).toFixed(0)}k triangles`;
   } catch (error) {
-    if (token === loadToken) {
-      mapStatus.textContent = `failed: ${error.message}`;
-    }
+    if (!isCurrent()) return;
+    mapStatus.textContent = `failed: ${error.message}`;
   }
 };
 
@@ -839,7 +845,7 @@ const openRun = async (
     // nothing about the camera gets first person. Free and Follow stay available
     // from the controls and from ?view=.
     applyView(view, { persist: false });
-    loadMapFor(run.meta, token);
+    loadMapFor(run.meta, token, player);
     loading.classList.add("is-hidden");
 
     if (rivalId) {
@@ -969,6 +975,14 @@ if (import.meta.env.DEV) {
   mapConvert.addEventListener("click", async () => {
     const name = mapConvert.dataset.map;
     if (!name) return;
+    const token = loadToken;
+    const intendedPlayer = player;
+    const meta = activeMeta;
+    const isCurrent = () =>
+      token === loadToken &&
+      player === intendedPlayer &&
+      intendedPlayer !== null;
+    if (!isCurrent()) return;
 
     mapConvert.disabled = true;
     mapConvert.textContent = "Converting…";
@@ -979,14 +993,20 @@ if (import.meta.env.DEV) {
         `/api/convert-map?name=${encodeURIComponent(name)}`,
         { method: "POST" },
       );
+      if (!isCurrent()) return;
+
       const result = await response.json();
+      if (!isCurrent()) return;
+
       if (!response.ok) {
         throw new Error(result.error ?? `failed with ${response.status}`);
       }
       mapConvert.hidden = true;
       mapStatus.textContent = `converted, ${result.megabytes} MB — loading`;
-      await loadMapFor(activeMeta, loadToken);
+      await loadMapFor(meta, token, intendedPlayer);
+      if (!isCurrent()) return;
     } catch (error) {
+      if (!isCurrent()) return;
       mapStatus.textContent = `conversion failed: ${error.message}`;
       mapConvert.disabled = false;
       mapConvert.textContent = "Try again";
