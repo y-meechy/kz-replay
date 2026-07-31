@@ -1270,7 +1270,9 @@ export const createPlayer = ({
     const eye = eyeHeightAt(index, cameraTrack);
 
     if (cameraMode === "first-person") {
-      setFov(90);
+      // CS2's fov 90 is horizontal at a 4:3 base; its vertical FOV is
+      // 2*atan(tan(45°) * 3/4) ≈ 73.74°, constant across aspect ratios.
+      setFov(73.74);
       camera.position.set(scratch.x, scratch.y + eye, scratch.z);
       camera.lookAt(
         scratch.x + lookTarget.x * 100,
