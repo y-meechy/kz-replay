@@ -1027,10 +1027,64 @@ body {
   white-space: nowrap;
 }
 
+/* The shortcut cheat sheet: a round "i" that pops its panel above the control
+   bar, so the shortcuts are one click away instead of a full line of them. */
 .controls__hint {
+  position: relative;
+}
+
+.controls__hint-button {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--edge);
+  border-radius: 50%;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: italic;
+  font-family: ui-serif, Georgia, serif;
+  cursor: pointer;
+  user-select: none;
+}
+
+.controls__hint-button::-webkit-details-marker {
+  display: none;
+}
+
+.controls__hint[open] .controls__hint-button,
+.controls__hint-button:hover {
+  color: var(--text);
+  border-color: var(--text);
+}
+
+.controls__hint-panel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 4px 10px;
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  border-radius: 9px;
   font-size: 11px;
   color: var(--muted);
   white-space: nowrap;
+  z-index: 10;
+}
+
+.controls__hint-panel dt {
+  color: var(--text);
+  font-family: ui-monospace, Menlo, monospace;
+}
+
+.controls__hint-panel dd {
+  margin: 0;
 }
 
 .segmented {

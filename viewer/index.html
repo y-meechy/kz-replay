@@ -207,10 +207,35 @@
         >
           MHUD
         </button>
-        <span class="controls__hint"
-          >space play · ← → step · C camera · M hud · free cam: drag look ·
-          WASD fly · Q/E down/up · shift fast</span
-        >
+        <!-- The shortcut cheat sheet lives behind an "i" so the control bar
+             stays clean; <details> gives the open/close for free. -->
+        <details class="controls__hint" id="hint">
+          <summary
+            class="controls__hint-button"
+            title="Keyboard shortcuts"
+            aria-label="Keyboard shortcuts"
+          >
+            i
+          </summary>
+          <dl class="controls__hint-panel">
+            <dt>space</dt>
+            <dd>play / pause</dd>
+            <dt>← →</dt>
+            <dd>step</dd>
+            <dt>C</dt>
+            <dd>camera</dd>
+            <dt>M</dt>
+            <dd>hud</dd>
+            <dt>drag</dt>
+            <dd>look (free cam)</dd>
+            <dt>WASD</dt>
+            <dd>fly (free cam)</dd>
+            <dt>Q/E</dt>
+            <dd>down / up (free cam)</dd>
+            <dt>shift</dt>
+            <dd>fast (free cam)</dd>
+          </dl>
+        </details>
       </footer>
 
       <!-- The movement HUD, in the KZ tradition: bottom centre, over the run, and
