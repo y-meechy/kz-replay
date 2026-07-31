@@ -737,8 +737,6 @@ export const createPlayer = ({
   let adoptedBakedLight = false;
   // The variants that may be given the map's baked lighting later: the ones drawn on
   // geometry that actually carries the atlas UV.
-  const lightMapCandidates = new Set();
-
   /**
    * @param canBeLit whether the geometry drawing this has the atlas UV (`uv1`).
    *
@@ -751,7 +749,12 @@ export const createPlayer = ({
    * `uv1` to look it up with throws out of the render loop, and the replay stops dead
    * mid-playback with nothing on screen to say why.
    */
-  const adoptMapMaterial = (material, canBeLit) => {
+  const adoptMapMaterial = (
+    material,
+    canBeLit,
+    lightMapCandidates,
+    ownedMaterials,
+  ) => {
     const key = `${material.uuid}${canBeLit ? ":lit" : ""}`;
     let adopted = adoptedMaterials.get(key);
     if (!adopted) {
@@ -776,8 +779,39 @@ export const createPlayer = ({
       }
       adopted.needsUpdate = true;
       adoptedMaterials.set(key, adopted);
+      ownedMaterials.add(adopted);
     }
     return adopted;
+  };
+
+  /**
+   * Free a GLTF scene that never became part of this player's scene.
+   *
+   * Three only disposes resources an application explicitly owns. A late loader
+   * callback is not reached by the normal scene sweep in dispose(), so its geometry,
+   * materials and textures need their own sweep before the callback is dropped.
+   */
+  const disposeMapScene = (root) => {
+    const geometries = new Set();
+    const materials = new Set();
+    const textures = new Set();
+    root.traverse((object) => {
+      if (object.geometry) geometries.add(object.geometry);
+      object.skeleton?.dispose?.();
+      const objectMaterials = Array.isArray(object.material)
+        ? object.material
+        : [object.material];
+      for (const material of objectMaterials) {
+        if (!material || material === mapMaterial) continue;
+        materials.add(material);
+        for (const value of Object.values(material)) {
+          if (value?.isTexture) textures.add(value);
+        }
+      }
+    });
+    for (const geometry of geometries) geometry.dispose();
+    for (const material of materials) material.dispose();
+    for (const texture of textures) texture.dispose();
   };
 
   /**
@@ -792,12 +826,16 @@ export const createPlayer = ({
    * sky. The dev server answers unknown paths with index.html, so the loader is also
    * the thing that rejects an HTML "hit".
    */
-  const loadSky = (mapUrl) => {
+  const loadSky = (mapUrl, isCurrent) => {
     const url = mapUrl.replace(/\.glb(\?.*)?$/, ".sky.webp");
     if (url === mapUrl) return;
     new THREE.TextureLoader().load(
       url,
       (texture) => {
+        if (!isCurrent()) {
+          texture.dispose();
+          return;
+        }
         texture.mapping = THREE.EquirectangularReflectionMapping;
         texture.colorSpace = THREE.SRGBColorSpace;
         scene.background?.dispose?.();
@@ -820,7 +858,7 @@ export const createPlayer = ({
    * Silent on failure, like the sky: a map converted with no lighting, or with the
    * lighting embedded because it had no textures, simply has no file to fetch.
    */
-  const loadBakedLight = async (mapUrl) => {
+  const loadBakedLight = async (mapUrl, lightMapCandidates, isCurrent) => {
     const url = mapUrl.replace(/\.glb(\?.*)?$/, ".light.webp");
     if (url === mapUrl) return;
     const texture = await new Promise((resolve) => {
@@ -829,6 +867,10 @@ export const createPlayer = ({
       );
     });
     if (!texture) return;
+    if (!isCurrent()) {
+      texture.dispose();
+      return;
+    }
 
     texture.colorSpace = THREE.SRGBColorSpace;
     // three.js calls the second UV set `uv1`, which is where a light map looks by
@@ -843,16 +885,48 @@ export const createPlayer = ({
       material.needsUpdate = true;
       attached += 1;
     }
-    if (attached) dimSceneLightsForBakedMap();
+    if (attached) {
+      dimSceneLightsForBakedMap();
+    } else {
+      texture.dispose();
+    }
   };
 
-  const loadMap = (url) =>
-    new Promise((resolve, reject) => {
+  let mapLoadGeneration = 0;
+  let cancelActiveMapLoad = null;
+  const cancelledMapLoadError = () => {
+    const error = new Error("map load cancelled");
+    error.name = "AbortError";
+    return error;
+  };
+
+  const loadMap = (url) => {
+    if (disposed) return Promise.reject(cancelledMapLoadError());
+
+    cancelActiveMapLoad?.();
+    const generation = ++mapLoadGeneration;
+    let cancel;
+    const cancelled = new Promise((resolve) => {
+      cancel = resolve;
+    });
+    cancelActiveMapLoad = cancel;
+    const isCurrent = () => !disposed && generation === mapLoadGeneration;
+
+    const operation = new Promise((resolve, reject) => {
       const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
       loader.load(
         url,
         (gltf) => {
+          if (!isCurrent()) {
+            disposeMapScene(gltf.scene);
+            reject(cancelledMapLoadError());
+            return;
+          }
+
           let triangles = 0;
+          let attached = false;
+          const lightMapCandidates = new Set();
+          const ownedMaterials = new Set();
           // Maps ship their own lights, and their intensities are in real world
           // units: kz_victoria's sun arrives at intensity 2732, which washes every
           // surface to pure white no matter how the scene's own lights are tuned.
@@ -871,6 +945,8 @@ export const createPlayer = ({
               ? adoptMapMaterial(
                   object.material,
                   object.geometry.hasAttribute("uv1"),
+                  lightMapCandidates,
+                  ownedMaterials,
                 )
               : mapMaterial;
             object.frustumCulled = true;
@@ -900,39 +976,81 @@ export const createPlayer = ({
             dimSceneLightsForBakedMap();
           }
 
-          // The sky is only a background, so it can arrive whenever it likes.
-          loadSky(url);
+          const abandon = () => {
+            for (const [key, material] of adoptedMaterials) {
+              if (ownedMaterials.has(material)) adoptedMaterials.delete(key);
+            }
+            disposeMapScene(gltf.scene);
+          };
 
-          // The baked lighting is awaited, and that is the whole point. Adding a light
-          // map to a material changes which shader it needs, so attaching it to a map
-          // already on screen makes three.js rebuild every one of them in a single
-          // frame — 80 programs on kz_dojo — and the replay visibly stops dead a couple
-          // of seconds in, exactly when the image finishes downloading. Finish the
-          // materials first, then show the map.
-          loadBakedLight(url)
-            .then(() =>
+          const finish = async () => {
+            try {
+              // The baked lighting is awaited, and that is the whole point. Adding a light
+              // map to a material changes which shader it needs, so attaching it to a map
+              // already on screen makes three.js rebuild every one of them in a single
+              // frame — 80 programs on kz_dojo — and the replay visibly stops dead a couple
+              // of seconds in, exactly when the image finishes downloading. Finish the
+              // materials first, then show the map.
+              try {
+                await Promise.race([
+                  loadBakedLight(url, lightMapCandidates, isCurrent),
+                  cancelled,
+                ]);
+              } catch {
+                // Like a missing lightmap, a malformed one falls back to the scene
+                // lights. Cancellation is the only reason not to keep loading.
+                if (!isCurrent()) throw cancelledMapLoadError();
+              }
+              if (!isCurrent()) throw cancelledMapLoadError();
+
               // And compile them before the first frame that needs them, rather than
               // when the camera turns and a wall is drawn for the first time. That
               // stall is not new — it is every map's first draw — but real textures
               // made it long enough to feel like a freeze.
-              renderer.compileAsync
-                ? renderer.compileAsync(gltf.scene, camera, scene)
-                : null,
-            )
-            .catch(() => {})
-            .then(() => {
+              if (renderer.compileAsync) {
+                try {
+                  await Promise.race([
+                    renderer.compileAsync(gltf.scene, camera, scene),
+                    cancelled,
+                  ]);
+                } catch {
+                  // Compilation is an optimisation. A driver that cannot precompile
+                  // can still compile lazily on the first rendered frame.
+                  if (!isCurrent()) throw cancelledMapLoadError();
+                }
+              }
+              if (!isCurrent()) throw cancelledMapLoadError();
+
               mapGroup.add(gltf.scene);
+              attached = true;
+              // The sky is independent scenery, but it must not even start loading
+              // until this map has survived every awaited stage above.
+              loadSky(url, isCurrent);
               mapGroup.visible = true;
               grid.visible = false;
               // With walls to hide behind, near geometry should not fade out.
               scene.fog = new THREE.Fog(SKY_HORIZON, span * 2, span * 8);
               resolve({ triangles: Math.round(triangles) });
-            });
+            } catch (error) {
+              reject(error);
+            } finally {
+              if (!attached) abandon();
+            }
+          };
+          void finish();
         },
         undefined,
         reject,
       );
     });
+
+    const cancelledResult = cancelled.then(() => {
+      throw cancelledMapLoadError();
+    });
+    return Promise.race([operation, cancelledResult]).finally(() => {
+      if (cancelActiveMapLoad === cancel) cancelActiveMapLoad = null;
+    });
+  };
 
   // --- cameras -------------------------------------------------------------
   // Where the free camera starts: off to one side and above the run, far enough out
@@ -1636,6 +1754,9 @@ export const createPlayer = ({
       ),
     dispose: () => {
       disposed = true;
+      mapLoadGeneration += 1;
+      cancelActiveMapLoad?.();
+      cancelActiveMapLoad = null;
       sizeObserver.disconnect();
       canvas.removeEventListener("pointerdown", onPointerDown);
       canvas.removeEventListener("pointermove", onPointerMove);
@@ -1650,7 +1771,14 @@ export const createPlayer = ({
       character?.dispose();
       rivalCharacter?.dispose();
       disposeCharacterAsset(characterAsset);
+      // Imported map textures are not freed by Material.dispose(). Use the same
+      // deduplicated sweep as an abandoned load, then detach the map so the general
+      // scene sweep below does not dispose its geometry and materials twice.
+      disposeMapScene(mapGroup);
+      mapGroup.clear();
+      mapMaterial.dispose();
       renderer.dispose();
+      scene.background?.dispose?.();
       scene.traverse((object) => {
         object.geometry?.dispose?.();
         object.material?.dispose?.();

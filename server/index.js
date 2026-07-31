@@ -364,14 +364,81 @@ const handle = async (request, response) => {
   });
 };
 
-createServer((request, response) => {
+const server = createServer((request, response) => {
   handle(request, response).catch((error) => {
     log(`${request.method} ${request.url} failed: ${error.stack}`);
     if (!response.headersSent)
       sendJson(response, 500, { error: "server error" });
     else response.end();
   });
-}).listen(PORT, () => {
+});
+
+const waitAtMost = (promise, milliseconds, description) =>
+  new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () =>
+        reject(new Error(`${description} timed out after ${milliseconds}ms`)),
+      milliseconds,
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+
+let shuttingDown = null;
+
+/**
+ * Stop accepting requests, let active ones finish, then make the view file durable.
+ * The hard bounds matter during deploys: a stuck client or filesystem must not keep
+ * the old container around forever.
+ */
+export const shutdown = (signal = "shutdown") => {
+  if (shuttingDown) return shuttingDown;
+  shuttingDown = (async () => {
+    log(`${signal} received, shutting down`);
+
+    const stopped = new Promise((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+      server.closeIdleConnections?.();
+    });
+    try {
+      await waitAtMost(stopped, 8_000, "HTTP server close");
+    } catch (error) {
+      log(`${error.message}; closing remaining connections`);
+      server.closeAllConnections?.();
+      try {
+        await waitAtMost(stopped, 1_000, "forced HTTP server close");
+      } catch (forcedError) {
+        log(forcedError.message);
+      }
+    }
+
+    try {
+      await waitAtMost(views.close(), 5_000, "view count flush");
+      log("view counts persisted");
+      return 0;
+    } catch (error) {
+      log(`shutdown could not persist view counts: ${error.message}`);
+      return 1;
+    }
+  })();
+  return shuttingDown;
+};
+
+for (const signal of ["SIGTERM", "SIGINT"]) {
+  process.once(signal, () => {
+    void shutdown(signal).then((exitCode) => process.exit(exitCode));
+  });
+}
+
+server.listen(PORT, () => {
   log(`kz-replay listening on :${PORT}`);
   log(`  app      ${DIST_DIR}`);
   log(`  data     ${DATA_DIR}`);
