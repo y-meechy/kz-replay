@@ -1162,6 +1162,10 @@ export const createPlayer = ({
   };
 
   const followOffset = new THREE.Vector3();
+  const desiredCameraPos = new THREE.Vector3();
+  const desiredLookAt = new THREE.Vector3();
+  const smoothedLookAt = new THREE.Vector3();
+  let followPrimed = false;
   const scratch = new THREE.Vector3();
   const rivalScratch = new THREE.Vector3();
   const lookTarget = new THREE.Vector3();
@@ -1400,17 +1404,39 @@ export const createPlayer = ({
     } else {
       setFov(70);
       followOffset.copy(lookTarget).multiplyScalar(-150);
-      camera.position.set(
+      desiredCameraPos.set(
         scratch.x + followOffset.x,
         scratch.y + eye + 60,
         scratch.z + followOffset.z,
       );
-      camera.lookAt(scratch.x, scratch.y + eye, scratch.z);
+      desiredLookAt.set(scratch.x, scratch.y + eye, scratch.z);
+
+      // The boom hangs behind wherever the runner looks, so every strafe whips
+      // the camera sideways at full mouse speed. Easing both ends of the boom
+      // toward where they want to be turns that whip into a swing — the camera
+      // trails the aim like it is on a gimbal. The exponential form keeps the
+      // lag identical at any frame rate, and the aim eases faster than the
+      // position so the runner never drifts out of frame. A desired position
+      // far from the smoothed one means a teleport or a seek, where trailing
+      // would sweep the camera through the map, so it snaps instead.
+      const teleported = desiredCameraPos.distanceTo(camera.position) > 500;
+      if (!followPrimed || teleported) {
+        camera.position.copy(desiredCameraPos);
+        smoothedLookAt.copy(desiredLookAt);
+        followPrimed = true;
+      } else {
+        camera.position.lerp(desiredCameraPos, 1 - Math.exp(-6 * delta));
+        smoothedLookAt.lerp(desiredLookAt, 1 - Math.exp(-10 * delta));
+      }
+      camera.lookAt(smoothedLookAt);
     }
   };
 
   const setCameraMode = (mode) => {
     cameraMode = CAMERA_MODES.includes(mode) ? mode : "freecam";
+    // Entering follow mode should place the camera, not swing it over from
+    // wherever the previous mode parked it.
+    followPrimed = false;
     if (cameraMode === "freecam") {
       // Pick up flying from wherever the last mode left the camera — coming out
       // of follow or first person, that is right at the runner, which is where
