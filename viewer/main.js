@@ -518,7 +518,7 @@ const updateHud = (frame) => {
     setText(statTeleports, `${frame.teleports} / ${frame.totalTeleports}`);
   }
 
-  setText(elapsed, frame.time.toFixed(2));
+  setText(elapsed, formatRunTime(frame.time));
   const scrubValue = String(Math.round(frame.progress * 1000));
   if (!scrubbing && scrub.value !== scrubValue) {
     scrub.value = scrubValue;
@@ -577,9 +577,9 @@ const showTeleportTools = () => {
   skipTpStatus.textContent = formatRunTime(cost.cleanDuration);
   const skipping = player.setSkipTeleports(skipTpToggle.checked);
   skipTpToggle.checked = skipping;
-  total.textContent = (
-    skipping ? cost.cleanDuration : reportedDuration()
-  ).toFixed(2);
+  total.textContent = formatRunTime(
+    skipping ? cost.cleanDuration : reportedDuration(),
+  );
   // Skipping teleports moves both the run's bounds and the whole duration, so the
   // shading is redrawn along with the numbers.
   renderRunBounds();
@@ -654,7 +654,7 @@ const selectPov = (next, { persist = false } = {}) => {
   // The name chip follows the POV: it says who you are watching, not who the link
   // opened on.
   watchRunner.textContent = meta?.player?.name ?? "unknown runner";
-  total.textContent = officialTime(meta, run?.track).toFixed(2);
+  total.textContent = formatRunTime(officialTime(meta, run?.track));
   renderScrubMarks(insights, selectedRunDuration());
   renderRunBounds();
   analysisPanel.refresh();
@@ -802,7 +802,7 @@ const openRun = async (
     clearRival();
 
     statRun.textContent = `${run.meta.map} · ${run.meta.course} · ${run.meta.mode}`;
-    total.textContent = officialTime(run.meta, run.track).toFixed(2);
+    total.textContent = formatRunTime(officialTime(run.meta, run.track));
 
     player = createPlayer({
       canvas: stage,
