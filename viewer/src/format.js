@@ -1,18 +1,20 @@
 // Formatting shared by the browse page and the viewer.
 
 /**
- * A run time the way KZ writes it.
+ * A run time in minutes, seconds and milliseconds.
  *
- * Most runs are seconds, so `37.81` is right. But a teleport run on a long map can
- * be half an hour (kz_angina_x has a 2091 second record), and `2091.32` is not a
- * time anyone reads. Past a minute it switches to m:ss.
+ * The clock always keeps the same shape so live playback, record cards and
+ * comparisons can be read at a glance: 5.2 seconds is `0:05.200`, and 61.234
+ * seconds is `1:01.234`.
  */
 export const formatRunTime = (seconds) => {
   if (!Number.isFinite(seconds)) return "—";
-  if (seconds < 60) return `${seconds.toFixed(2)}s`;
-  const minutes = Math.floor(seconds / 60);
-  const rest = seconds - minutes * 60;
-  return `${minutes}:${rest.toFixed(2).padStart(5, "0")}`;
+  const totalMilliseconds = Math.max(0, Math.round(seconds * 1000));
+  const minutes = Math.floor(totalMilliseconds / 60_000);
+  const remainder = totalMilliseconds - minutes * 60_000;
+  const wholeSeconds = Math.floor(remainder / 1000);
+  const milliseconds = remainder - wholeSeconds * 1000;
+  return `${minutes}:${String(wholeSeconds).padStart(2, "0")}.${String(milliseconds).padStart(3, "0")}`;
 };
 
 /** Signed, always three decimals: a gap of exactly zero still shows its sign slot. */
