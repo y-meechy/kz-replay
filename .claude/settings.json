@@ -9,6 +9,16 @@
             "command": "f=$(jq -r '.tool_input.file_path // empty'); case \"$f\" in */node_modules/*|*/viewer/public/*) ;; *.js|*.html|*.css) npx prettier --write \"$f\" >/dev/null 2>&1 || true ;; esac"
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/simplifier-track-edits.sh\"",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "Stop": [
@@ -16,7 +26,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'If you changed code this turn, consider running /simplify on the touched files before committing.'"
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/simplifier-trigger.sh\"",
+            "timeout": 10
           }
         ]
       }
