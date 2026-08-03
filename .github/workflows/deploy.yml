@@ -3,7 +3,15 @@ name: Deploy
 on:
   push:
     branches: [main]
+  # A deploy refused mid-refresh or mid-hold exits red and nothing retries it,
+  # so an hourly tick picks up anything a quiet moment can now deploy. The
+  # script no-ops when the host is already on the newest tested commit.
+  schedule:
+    - cron: "17 * * * *"
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: deploy
@@ -12,9 +20,12 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version: 22
           cache: npm
@@ -24,6 +35,7 @@ jobs:
   deploy:
     needs: test
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment: production
     steps:
       - name: Deploy over SSH
@@ -37,6 +49,8 @@ jobs:
           printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          # The server side ignores the command and runs the forced deploy
-          # script from authorized_keys; "deploy" is just for the logs.
-          ssh -i ~/.ssh/deploy_key "$SSH_USER@$SSH_HOST" deploy
+          # The server side runs the forced deploy script from authorized_keys;
+          # the command only carries the tested commit, so a push that lands
+          # while this job runs cannot deploy untested.
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -i ~/.ssh/deploy_key "$SSH_USER@$SSH_HOST" "deploy $GITHUB_SHA"

@@ -93,6 +93,14 @@ export const openReplay = (buffer) => {
     const compressedSize = cursor.u32();
     const uncompressedSize = cursor.u32();
     const elementCount = cursor.u32();
+    // The biggest real section (subticks) is a few MB. A u32 can claim 4 GB,
+    // and data() allocates the claimed size up front, so an implausible number
+    // is refused here rather than handed to the allocator.
+    if (uncompressedSize > 256 * 1024 * 1024) {
+      throw new Error(
+        `section "${name}" claims ${uncompressedSize} bytes uncompressed, refusing`,
+      );
+    }
     const compressed = cursor.take(compressedSize);
 
     sections[name] = {

@@ -118,7 +118,8 @@ exactly what "the textures are not in the workshop item" looked like.
 Texture pixels are nearly free: 64 px and 128 px differ by 90 KB, because the cost is
 the extra vertex streams a texture needs, not the images. Both builds pay that once, and
 for now they are alternatives rather than a pair — the trim pass keeps one texture
-coordinate set, and `--textures` takes it.
+coordinate set. Textures are the default; `--no-textures` gives the surface
+coordinate set back to the baked lighting.
 
 **Surfaces with nothing to draw fall back to a colour.** Two kinds of surface come out
 of a textured export with no material: the shaders glTF has no room for, like water, and
@@ -263,7 +264,7 @@ level edge, it needs no download at all, and nothing reads it yet.
 | `kzreplay inspect <record_id>`        | Dump the header, the section table and the timer events                             |
 | `kzreplay verify --limit 60`          | Parse many replays and report any that desync                                       |
 | `kzreplay map kz_victoria`            | Download and convert one map to a web glb, with its own baked lighting and real sky |
-| `kzreplay map kz_victoria --textures` | The same, with the mapper's own surface textures instead of the baked lighting      |
+| `kzreplay map kz_victoria --no-textures` | The same without the mapper's surface textures, baked lighting only              |
 | `kzreplay refresh [--no-geometry]`    | Rebuild the map and record catalog the viewer browses                               |
 | `kzreplay player-model`               | Borrow the CT character out of CS2 for the third-person camera                      |
 | `kzreplay compare <a> <b>`            | Full stats for two runs, and where the time was lost                                |

@@ -79,8 +79,11 @@ build failure leaves the old commit and old container serving. A container
 that never turns healthy is rolled back automatically. The `concurrency`
 group keeps two pushes from deploying at once.
 
-The key GitHub holds can only run the deploy script, nothing else. In the
-deploy user's `~/.ssh/authorized_keys` on the host:
+The workflow sends `deploy <commit>` — the exact commit its tests ran on — and
+the script refuses anything that is not on `origin/main`, so a push landing
+mid-run cannot ship untested. The key GitHub holds can only run the deploy
+script, nothing else. In the deploy user's `~/.ssh/authorized_keys` on the
+host:
 
 ```
 command="/opt/kz-replay/deploy/deploy.sh",restrict ssh-ed25519 AAAA... deploy@github-actions

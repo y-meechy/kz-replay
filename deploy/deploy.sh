@@ -38,9 +38,22 @@ main() {
   fi
 
   git fetch --quiet origin main
-  local current target
+  local current target requested
   current=$(git rev-parse HEAD)
   target=$(git rev-parse origin/main)
+
+  # The workflow sends "deploy <sha>" — the commit its tests actually ran on.
+  # Deploying that instead of whatever main points at now closes the race where
+  # a push lands mid-run and ships untested. Anything malformed is ignored and
+  # the tip of main used, so a plain "deploy" keeps working.
+  requested=$(printf '%s' "${SSH_ORIGINAL_COMMAND:-}" | sed -n 's/^deploy \([0-9a-f]\{40\}\)$/\1/p')
+  if [ -n "$requested" ]; then
+    if ! git merge-base --is-ancestor "$requested" origin/main 2>/dev/null; then
+      log "requested commit ${requested:0:8} is not on origin/main, refusing"
+      return 1
+    fi
+    target=$requested
+  fi
   if [ "$current" = "$target" ]; then
     log "already at ${current:0:8}, nothing to do"
     return 0
@@ -53,7 +66,7 @@ main() {
   docker image tag kz-replay:latest kz-replay:rollback 2>/dev/null ||
     log "no current image to keep as rollback"
 
-  git reset --quiet --hard origin/main
+  git reset --quiet --hard "$target"
   log "building"
   if ! docker compose -f "$COMPOSE_FILE" build --pull; then
     log "BUILD FAILED, still serving ${current:0:8}"
@@ -75,7 +88,10 @@ main() {
   done
 
   log "UNHEALTHY after ${HEALTH_TIMEOUT_SECONDS}s, rolling back to ${current:0:8}"
-  docker image tag kz-replay:rollback kz-replay:latest
+  # On a first-ever deploy there is no rollback image; still reset the repo and
+  # restart rather than dying here and leaving the broken commit checked out.
+  docker image tag kz-replay:rollback kz-replay:latest 2>/dev/null ||
+    log "no rollback image to restore"
   git reset --quiet --hard "$current"
   docker compose -f "$COMPOSE_FILE" up -d --no-deps --scale kz-replay=1
   return 1

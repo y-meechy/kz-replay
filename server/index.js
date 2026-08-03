@@ -16,6 +16,8 @@
 
 import { createServer } from "node:http";
 import { createReadStream } from "node:fs";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { readFile, stat } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import {
@@ -162,14 +164,12 @@ const proxyReplay = async (response, recordId) => {
     // A replay file for a given record never changes, so it can be cached hard.
     "cache-control": "public, max-age=604800, immutable",
   });
-  // Node 18+ gives a web ReadableStream here; Readable.fromWeb would work too but
-  // this avoids the import for a body that is a few hundred kilobytes. The abort
+  // pipeline() rather than a write loop: it waits for the response socket to
+  // drain, so a slow client buffers on its own connection instead of in this
+  // process, and it tears both streams down on either side failing. The abort
   // signal above also fires mid-body, so a trickling upstream surfaces here.
   try {
-    for await (const chunk of upstream.body) {
-      response.write(chunk);
-    }
-    response.end();
+    await pipeline(Readable.fromWeb(upstream.body), response);
   } catch (error) {
     log(`replay ${recordId} stream broke: ${error.message}`);
     response.destroy();

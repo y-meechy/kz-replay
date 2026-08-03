@@ -9,9 +9,9 @@ One command does the whole job — workshop download, geometry export, trim,
 lighting, sky, compression:
 
 ```bash
-node bin/kzreplay.js map <map_name>              # e.g. kz_victoria
-node bin/kzreplay.js map <map_name> --textures   # surface textures instead of baked lighting
-node bin/kzreplay.js map <map_name> --no-sky     # skip the sky (no DepotDownloader needed)
+node bin/kzreplay.js map <map_name>                # e.g. kz_victoria; textures are on by default
+node bin/kzreplay.js map <map_name> --no-textures  # baked lighting only, no surface textures
+node bin/kzreplay.js map <map_name> --no-sky       # skip the sky (no DepotDownloader needed)
 ```
 
 Output lands in `viewer/public/maps/<map>.glb` plus `<map>.sky.webp`. The dev

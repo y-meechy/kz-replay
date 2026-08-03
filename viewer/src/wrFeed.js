@@ -379,6 +379,12 @@ export const createWrFeed = ({ root, getRun, onOpenInPlayer, onBack }) => {
 
       records = (feed?.records ?? []).filter((record) => record.recordId);
 
+      // Let go of the previous batch before replacing the DOM either way: the
+      // observer would otherwise keep the detached slides alive and keep firing
+      // for them, and `slides` would still point show() at dead elements.
+      observer.disconnect();
+      slides.clear();
+
       // A visitor is told what is happening in their own terms. What to type to fix
       // it is a note to whoever is running the thing, so it is only shown on a dev
       // server — a page on the internet must never read like a terminal prompt.
@@ -399,11 +405,7 @@ export const createWrFeed = ({ root, getRun, onOpenInPlayer, onBack }) => {
       }
 
       dom.subtitle.textContent = `${records.length} runs · scroll for the next one`;
-      // Let go of the previous batch before replacing it: the observer would
-      // otherwise keep the detached slides alive and keep firing for them.
-      observer.disconnect();
       dom.scroll.innerHTML = records.map(slideHtml).join("");
-      slides.clear();
       for (const element of dom.scroll.querySelectorAll(".slide")) {
         collectSlide(element);
         observer.observe(element);

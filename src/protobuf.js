@@ -85,6 +85,11 @@ const readVarint = (bytes, offset) => {
     if (index >= bytes.length) {
       throw new Error("truncated varint");
     }
+    // 10 bytes encode a full 64 bits; an 11th continuation byte is not a big
+    // number, it is garbage that would otherwise grow the BigInt without bound.
+    if (index - offset >= 10) {
+      throw new Error(`varint at byte ${offset} runs past 64 bits`);
+    }
     const byte = bytes[index];
     index += 1;
     result |= BigInt(byte & 0x7f) << shift;
