@@ -1,7 +1,6 @@
 # kz-replay
 
-Watch CS2KZ runs in the browser. No game installed anywhere, no video rendering,
-no upload to YouTube. The replay file goes in, WebGL comes out.
+Watch CS2KZ runs in the browser. The replay file goes in, WebGL comes out.
 
 **Live at [demo.kzcomp.com](https://demo.kzcomp.com)** — the map list, a
 scrollable [world record feed](https://demo.kzcomp.com/wr), and a player that
