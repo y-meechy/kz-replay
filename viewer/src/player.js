@@ -558,6 +558,12 @@ export const createPlayer = ({
   };
 
   const setRival = (rivalTrack) => {
+    // clear() only detaches the old line; its buffers stay on the GPU until they
+    // are disposed, and comparing rivals back and forth would pile them up.
+    if (rival?.line) {
+      rival.line.geometry.dispose();
+      rival.line.material.dispose();
+    }
     rivalGroup.clear();
     rival = null;
     rivalMarker.visible = false;

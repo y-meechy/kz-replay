@@ -399,6 +399,9 @@ export const createWrFeed = ({ root, getRun, onOpenInPlayer, onBack }) => {
       }
 
       dom.subtitle.textContent = `${records.length} runs · scroll for the next one`;
+      // Let go of the previous batch before replacing it: the observer would
+      // otherwise keep the detached slides alive and keep firing for them.
+      observer.disconnect();
       dom.scroll.innerHTML = records.map(slideHtml).join("");
       slides.clear();
       for (const element of dom.scroll.querySelectorAll(".slide")) {

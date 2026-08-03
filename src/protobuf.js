@@ -50,6 +50,13 @@ export const decodeMessage = (bytes) => {
       case WIRE_LENGTH: {
         const [length, next] = readVarint(bytes, offset);
         const size = Number(length);
+        // subarray() clamps silently past the end, which would hand back a
+        // truncated field and drop every field after it without a sound.
+        if (next + size > bytes.length) {
+          throw new Error(
+            `truncated protobuf: field ${fieldNumber} wants ${size} bytes at ${next}, only ${bytes.length - next} left`,
+          );
+        }
         push(fieldNumber, bytes.subarray(next, next + size));
         offset = next + size;
         break;

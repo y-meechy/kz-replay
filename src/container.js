@@ -43,6 +43,9 @@ class Cursor {
   }
 
   u32() {
+    if (this.offset + 4 > this.bytes.length) {
+      throw new Error(`truncated replay: wanted 4 bytes at ${this.offset}`);
+    }
     const value = this.view.getUint32(this.offset, true);
     this.offset += 4;
     return value;

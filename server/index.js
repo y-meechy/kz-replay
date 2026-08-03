@@ -39,6 +39,7 @@ const DIST_DIR = process.env.KZ_DIST_DIR
   : join(REPO_ROOT, "viewer", "dist");
 
 const REPLAY_BASE = "https://replays.cs2kz.org";
+const REPLAY_TIMEOUT_MS = 120_000;
 const RECORD_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -132,7 +133,12 @@ const proxyReplay = async (response, recordId) => {
     return;
   }
 
-  const upstream = await fetch(`${REPLAY_BASE}/${recordId}`).catch((error) => {
+  // The deadline covers headers and the whole body: this is the one public,
+  // unauthenticated endpoint, and a stalled upstream must not hold a socket
+  // open per request until the process runs out of them.
+  const upstream = await fetch(`${REPLAY_BASE}/${recordId}`, {
+    signal: AbortSignal.timeout(REPLAY_TIMEOUT_MS),
+  }).catch((error) => {
     log(`replay ${recordId} unreachable: ${error.message}`);
     return null;
   });
@@ -157,11 +163,17 @@ const proxyReplay = async (response, recordId) => {
     "cache-control": "public, max-age=604800, immutable",
   });
   // Node 18+ gives a web ReadableStream here; Readable.fromWeb would work too but
-  // this avoids the import for a body that is a few hundred kilobytes.
-  for await (const chunk of upstream.body) {
-    response.write(chunk);
+  // this avoids the import for a body that is a few hundred kilobytes. The abort
+  // signal above also fires mid-body, so a trickling upstream surfaces here.
+  try {
+    for await (const chunk of upstream.body) {
+      response.write(chunk);
+    }
+    response.end();
+  } catch (error) {
+    log(`replay ${recordId} stream broke: ${error.message}`);
+    response.destroy();
   }
-  response.end();
 };
 
 // --- the nightly job --------------------------------------------------------

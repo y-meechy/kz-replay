@@ -46,10 +46,12 @@ export const refresh = async ({
 } = {}) => {
   const started = Date.now();
 
+  // Build both before writing either: the leaderboards are ~620 requests and can
+  // fail halfway, and a maps.json from today next to a leaderboards.json from
+  // yesterday would disagree with each other until the next nightly run.
   const catalog = await buildMapCatalog({ log });
-  await writeJson(MAPS_JSON, catalog);
-
   const leaderboards = await buildLeaderboards(catalog.maps, { log });
+  await writeJson(MAPS_JSON, catalog);
   await writeJson(LEADERBOARDS_JSON, leaderboards);
 
   // The feed is the one part of the catalog that is better stale than empty: it is a

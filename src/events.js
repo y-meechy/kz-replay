@@ -34,7 +34,15 @@ export const decodeEvents = (inflated, elementCount) => {
     return [];
   }
 
-  const stride = Math.floor(inflated.length / elementCount);
+  // The stride must divide the section exactly. A rounded-down stride would put
+  // every event after the first at the wrong offset and still decode to
+  // plausible numbers, the same failure mode ticks.js refuses.
+  if (inflated.length % elementCount !== 0) {
+    throw new Error(
+      `events section is ${inflated.length} bytes for ${elementCount} events, not a whole stride`,
+    );
+  }
+  const stride = inflated.length / elementCount;
   const view = new DataView(
     inflated.buffer,
     inflated.byteOffset,

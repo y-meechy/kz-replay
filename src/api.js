@@ -11,8 +11,16 @@
 const API_BASE = "https://api.cs2kz.org";
 const REPLAY_BASE = "https://replays.cs2kz.org";
 
+// Every request carries a deadline. A hung upstream would otherwise hang the
+// caller forever — on the server that leaves the nightly refresh's `refreshing`
+// flag stuck until someone restarts the process.
+const API_TIMEOUT_MS = 30_000;
+const REPLAY_TIMEOUT_MS = 120_000;
+
 const getJson = async (path) => {
-  const response = await fetch(`${API_BASE}${path}`);
+  const response = await fetch(`${API_BASE}${path}`, {
+    signal: AbortSignal.timeout(API_TIMEOUT_MS),
+  });
   if (!response.ok) {
     throw new Error(`GET ${path} failed with ${response.status}`);
   }
@@ -77,7 +85,9 @@ export const fetchLeaderboard = async ({
 
 /** Download a raw .replay file. Returns an ArrayBuffer. */
 export const fetchReplay = async (recordId) => {
-  const response = await fetch(`${REPLAY_BASE}/${recordId}`);
+  const response = await fetch(`${REPLAY_BASE}/${recordId}`, {
+    signal: AbortSignal.timeout(REPLAY_TIMEOUT_MS),
+  });
   if (response.status === 404) {
     throw new Error(
       `no replay stored for record ${recordId} — either it predates replay uploads, ` +
