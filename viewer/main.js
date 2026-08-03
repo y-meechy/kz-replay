@@ -111,6 +111,14 @@ const readRoute = () => {
     // The feed's own id parameter: which record it is scrolled to.
     return { page: "wr", ids: [], dropped: 0, feedId: params.get("id") };
   }
+  if (path === "/play") {
+    return {
+      page: "play",
+      ids: [],
+      dropped: 0,
+      map: params.get("map") ?? "kz_victoria",
+    };
+  }
   if (path !== "/watch") return { page: "browse", ids: [], dropped: 0 };
 
   const requested = params.get("view");
@@ -136,6 +144,8 @@ const browseRoot = el("browse");
 const feedRoot = el("wr");
 const watchRoot = el("watch");
 const docsRoot = el("docs");
+const playRoot = el("play-page");
+const playCanvas = el("play-canvas");
 const stage = el("stage");
 const loading = el("loading");
 const backButton = el("back");
@@ -1062,6 +1072,7 @@ const browse = createBrowse({
       ),
     ),
   onFeed: () => navigate("/wr"),
+  onPlay: (map) => navigate(`/play?map=${encodeURIComponent(map)}`),
 });
 
 const feed = createWrFeed({
@@ -1073,7 +1084,18 @@ const feed = createWrFeed({
   onBack: () => navigate("/"),
 });
 
-const route = () => {
+// The play page is a physics + rendering bundle nobody pays for until they
+// actually click "Play", so it is code-split and constructed on first visit.
+let play = null;
+const ensurePlay = async () => {
+  if (!play) {
+    const { createPlay } = await import("./src/play/index.js");
+    play = createPlay({ root: playRoot, canvas: playCanvas });
+  }
+  return play;
+};
+
+const route = async () => {
   // An old hash link is turned into the current shape and re-routed, so nothing
   // below has to know the old format existed.
   const legacy = legacyUrl();
@@ -1082,7 +1104,19 @@ const route = () => {
     return;
   }
 
-  const { page, ids, view, notice, dropped, feedId } = readRoute();
+  const { page, ids, view, notice, dropped, feedId, map } = readRoute();
+
+  if (page === "play") {
+    docsRoot.hidden = true;
+    watchRoot.hidden = true;
+    leaveWatch();
+    feed.hide();
+    browse.hide();
+    const activePlay = await ensurePlay();
+    activePlay.show(map);
+    return;
+  }
+  play?.hide();
 
   if (page === "wr") {
     docsRoot.hidden = true;

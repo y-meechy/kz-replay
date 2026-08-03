@@ -27,7 +27,7 @@ const fetchJson = async (url, fallback) => {
   }
 };
 
-export const createBrowse = ({ root, onWatch, onFeed }) => {
+export const createBrowse = ({ root, onWatch, onFeed, onPlay }) => {
   let maps = [];
   let entries = {};
   let geometry = {};
@@ -91,6 +91,7 @@ export const createBrowse = ({ root, onWatch, onFeed }) => {
             <span class="card-map__courses">${map.courses.length} course${map.courses.length === 1 ? "" : "s"}</span>
             <span class="card-map__runs ${watchable ? "" : "is-empty"}">${watchable ? `${watchable} to watch` : "no replays"}</span>
           </div>
+          ${glb ? `<span class="card-map__play" role="button" data-play="${escapeHtml(map.name)}">▶ Play</span>` : ""}
         </div>
       </button>`;
   };
@@ -353,6 +354,9 @@ export const createBrowse = ({ root, onWatch, onFeed }) => {
         <button id="browse-feed" class="button button--primary button--feed" type="button">
           ▶ Latest world records
         </button>
+        <button id="browse-play" class="button button--feed" type="button">
+          ▶ Play kz_victoria
+        </button>
         <input id="browse-filter" class="input" type="search" placeholder="filter by map name" spellcheck="false" />
         <label class="checkbox"><input type="checkbox" id="browse-glb" /><span>only maps with 3D geometry</span></label>
       </div>
@@ -430,6 +434,7 @@ export const createBrowse = ({ root, onWatch, onFeed }) => {
     views: root.querySelector("#sheet-views"),
     watch: root.querySelector("#sheet-watch"),
     feed: root.querySelector("#browse-feed"),
+    play: root.querySelector("#browse-play"),
     compareInput: root.querySelector("#sheet-compare-id"),
     compareButton: root.querySelector("#sheet-compare"),
     compareError: root.querySelector("#sheet-compare-error"),
@@ -446,11 +451,18 @@ export const createBrowse = ({ root, onWatch, onFeed }) => {
     renderGrid();
   });
   dom.feed.addEventListener("click", () => onFeed?.());
+  dom.play.addEventListener("click", () => onPlay?.("kz_victoria"));
   dom.replayButton.addEventListener("click", resolveReplay);
   dom.replayInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") resolveReplay();
   });
   dom.grid.addEventListener("click", (event) => {
+    const playName = event.target.closest("[data-play]")?.dataset.play;
+    if (playName) {
+      event.stopPropagation();
+      onPlay?.(playName);
+      return;
+    }
     const name = event.target.closest("[data-map]")?.dataset.map;
     if (!name) return;
     selected = name;

@@ -1989,3 +1989,154 @@ body {
     min-height: 46px;
   }
 }
+
+/* --- Per-map "Play" pill on the browse grid --------------------------- */
+
+.card-map__play {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 4px 10px;
+  border: 1px solid rgba(34, 211, 238, 0.5);
+  background: rgba(34, 211, 238, 0.14);
+  color: #a5f3fc;
+  border-radius: 999px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.card-map__play:hover {
+  background: rgba(34, 211, 238, 0.24);
+}
+
+/* --- /play: the playable CKZ demo -------------------------------------- */
+
+#play-page {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  overflow: hidden;
+}
+
+#play-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: crosshair;
+}
+
+#play-hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  font-family: inherit;
+  color: #e5f1ff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+.play-hud__speed {
+  position: absolute;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.play-hud__speed-value {
+  font-size: 48px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.play-hud__speed-unit {
+  font-size: 14px;
+  opacity: 0.75;
+}
+
+.play-hud__debug {
+  position: absolute;
+  bottom: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+.play-hud__jump {
+  position: absolute;
+  bottom: 90px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 13px;
+  min-height: 1em;
+}
+
+.play-hud__lock-prompt {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: rgba(6, 10, 18, 0.72);
+  /* The prompt covers the whole canvas so its text sits centered, but a click
+     anywhere in that area has to reach the canvas underneath — that's what
+     engages pointer lock. Only the sensitivity slider re-enables clicks. */
+  pointer-events: none;
+}
+
+.play-hud__lock-prompt--visible {
+  display: flex;
+}
+
+.play-hud__lock-title {
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.play-hud__legend {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  opacity: 0.85;
+  text-align: center;
+}
+
+.play-hud__legend kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  margin: 0 1px;
+  border: 1px solid var(--edge, rgba(148, 163, 184, 0.4));
+  border-radius: 5px;
+  background: rgba(148, 163, 184, 0.12);
+  font-size: 11px;
+  font-family: inherit;
+}
+
+.play-hud__sens {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  margin-top: 4px;
+  /* The one interactive control inside the lock prompt — everything else in
+     that overlay lets clicks fall through to the canvas underneath. */
+  pointer-events: auto;
+}
+
+.play-hud__sens input[type="range"] {
+  width: 180px;
+}
