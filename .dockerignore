@@ -10,6 +10,7 @@ viewer/public/models/*
 viewer/public/tracks/*
 tools
 samples
-docs
+docs/*
+!docs/third-party-notices.md
 README.md
 npm-debug.log*
