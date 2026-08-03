@@ -26,12 +26,12 @@ const TICK_RATE = 64;
  *
  * A jump block is 64 units across and players land anywhere on one, so the
  * horizontal window has to be about that wide. Vertically it must stay tight:
- * courses stack blocks and platforms directly above each other, and 40 units is
- * under one player height, so a landing one floor up can never be mistaken for the
- * same place.
+ * courses stack blocks and platforms directly above each other, and 10 units is
+ * far under one player height, so a landing one floor up can never be mistaken
+ * for the same place.
  */
 const HORIZONTAL_TOLERANCE = 80;
-const VERTICAL_TOLERANCE = 40;
+const VERTICAL_TOLERANCE = 10;
 
 /**
  * How far apart along the course two touchdowns may be and still pair up.
