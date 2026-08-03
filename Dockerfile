@@ -90,7 +90,8 @@ COPY --from=build --chown=node:node /app/src ./src
 COPY --from=build --chown=node:node /app/bin ./bin
 COPY --from=build --chown=node:node /app/viewer/public/data /opt/kz-seed/data
 COPY --from=build --chown=node:node /app/viewer/public/maps /opt/kz-seed/maps
-COPY --from=build --chown=node:node /app/LICENSE /app/THIRD_PARTY_NOTICES.md ./
+COPY --from=build --chown=node:node /app/LICENSE ./
+COPY --from=build --chown=node:node /app/docs/third-party-notices.md ./THIRD_PARTY_NOTICES.md
 COPY --chown=root:root deploy/entrypoint.sh /usr/local/bin/kz-replay-entrypoint
 
 RUN chmod 0755 /usr/local/bin/kz-replay-entrypoint \

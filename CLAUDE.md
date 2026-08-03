@@ -72,4 +72,4 @@ tests.
   versions instead of guessing. Source of truth for the replay format is the
   AGPL-3.0-licensed cs2kz-metamod plugin, and `src/ticks.js` is a port of its tick
   decoder. Keep the pinned upstream link and attribution in `docs/replay-format.md`
-  and `THIRD_PARTY_NOTICES.md`.
+  and `docs/third-party-notices.md`.

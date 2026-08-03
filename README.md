@@ -10,7 +10,11 @@ opens any retained replay by id and can race two runs against each other.
 
 ![watching a run through the runner's eyes, weapon and all](docs/first-person.png)
 
+_kz_victoria — [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3086304337)._
+
 ![the same run in the follow camera, on the CT model](docs/third-person.png)
+
+_kz_victoria — [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3086304337)._
 
 It reads the CS2KZ `.replay` format directly, rebuilds the run tick by tick, and
 plays it back in three.js — through the runner's eyes, from a follow camera, or
@@ -76,7 +80,7 @@ _kz_grotto by ReDMooN — [Steam Workshop](https://steamcommunity.com/sharedfile
 - [docs/comparison.md](docs/comparison.md) — how two runs are compared, in the viewer and on the CLI
 - [docs/viewer.md](docs/viewer.md) — browsing, the world record feed, view counts
 - [docs/self-hosting.md](docs/self-hosting.md) — build and run a public instance
-- [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) — upstream code, game assets, maps and trademarks
+- [docs/third-party-notices.md](docs/third-party-notices.md) — upstream code, game assets, maps and trademarks
 
 ## Layout
 
@@ -101,5 +105,5 @@ JavaScript port of the AGPL-3.0-licensed
 [cs2kz-metamod source at an immutable revision](https://github.com/KZGlobalTeam/cs2kz-metamod/tree/7bf63fd18f588bd69e91c9236eb44392be57ec11/src/kz/replays);
 the original C++ file is not vendored here. Maps, screenshots, Valve game assets,
 names, and trademarks may have separate owners and terms. See
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before redistributing generated
+[docs/third-party-notices.md](docs/third-party-notices.md) before redistributing generated
 assets or a pre-populated deployment.

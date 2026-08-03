@@ -5,7 +5,7 @@ files and generated catalogs, proxies replay downloads that browsers cannot requ
 directly, counts views, refreshes CS2KZ data nightly, and optionally converts missing
 maps and the player model.
 
-Before publishing an instance, read [the third-party notices](../THIRD_PARTY_NOTICES.md).
+Before publishing an instance, read [the third-party notices](third-party-notices.md).
 A local conversion can contain Workshop or Valve assets that are not covered by this
 project's AGPL license.
 
