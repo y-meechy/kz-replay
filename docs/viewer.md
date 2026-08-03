@@ -7,12 +7,13 @@ Filter by name or geometry availability, open a map, then choose a course and mo
 The viewer offers the world record when its replay exists and otherwise falls back
 to the fastest available replay on that leaderboard.
 
-This works because nothing in `src/` uses a Node API: the same parser, track builder
-and analysis run in either place. The one exception is the download itself —
-`replays.cs2kz.org` sends no CORS headers, so the dev server proxies `/replay/<id>`
-to it (see `viewer/vite.config.js`). A deployed viewer needs the same one line of
-proxying somewhere server side. The API itself does send CORS headers and is called
-directly.
+This works because the browser-facing subset of `src/` avoids Node APIs: the
+parser, track builder, and analysis modules imported by the viewer run in either
+place. Other `src/` modules are Node-only pipelines and use `fs`, `path`,
+`child_process`, and related APIs. The replay download itself also needs a server:
+`replays.cs2kz.org` sends no CORS headers, so the dev server proxies
+`/replay/<id>` to it (see `viewer/vite.config.js`). A deployed viewer needs an
+equivalent proxy. The records API sends CORS headers and is called directly.
 
 ## The world record feed
 
@@ -35,9 +36,9 @@ Two things make sixty records affordable on a phone:
   for. A replay is a few hundred kilobytes and the browser caches it.
 
 The list itself is `viewer/public/data/wrs.json`, four API requests, rebuilt by the
-nightly refresh and by `kzreplay wrfeed`. Records whose replay file is gone are left
-out: browse has something honest to say about a record it cannot play, a feed does
-not.
+nightly refresh and by `node bin/kzreplay.js wrfeed`. Records whose replay file is
+gone are left out: browse has something honest to say about a record it cannot play,
+a feed does not.
 
 **Where the dates come from.** The API sorts records by submission date but never
 returns one. Record ids are UUIDv7, whose first 48 bits are the millisecond the id was

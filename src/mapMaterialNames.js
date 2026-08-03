@@ -9,12 +9,10 @@
 // `n0_lr0_c24_s_cb_nv_mesh_meshset_0.dmx` and the mesh it describes arrives in the
 // glTF as `n0_lr0_c24_s_cb_nv_mesh.meshset_0`, so only the separator differs.
 
-import { execFile } from "node:child_process";
 import { readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { promisify } from "node:util";
 
-const run = promisify(execFile);
+import { runTool as run } from "./toolProcess.js";
 
 // The node dumps are binary, and the paths sit in them as plain ASCII.
 const MATERIAL_PATH = /materials\/[a-zA-Z0-9_/.-]+\.vmat/g;

@@ -22,17 +22,14 @@
 // What comes out is one `ct.glb` of a few megabytes, holding the third-person body, its
 // gloves and eight named locomotion clips the viewer's state machine picks between.
 
-import { execFile } from "node:child_process";
 import { copyFile, mkdir, readdir, rename, rm, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { promisify } from "node:util";
 import { NodeIO } from "@gltf-transform/core";
 import { cs2IndexPath, ensureCs2Assets, syncCs2Index } from "./cs2Content.js";
 import { validateGlb } from "./mapPipeline.js";
 import { CS2_DIR, REPO_ROOT, TOOLS_DIR } from "./config.js";
-
-const run = promisify(execFile);
+import { runTool as run } from "./toolProcess.js";
 
 const GLTF_TRANSFORM = join(
   REPO_ROOT,

@@ -26,13 +26,18 @@ made two runs on kz_topsecret look like they were on different routes entirely.
 
 **The decoder must land exactly on the last byte of the section.** It throws if it
 does not, because a single wrong field size shifts everything after it and the
-output would still look plausible. That check is the test suite. `kzreplay verify`
-runs it across many real replays.
+output would still look plausible. That check is one important parser invariant.
+`node bin/kzreplay.js verify` runs it across many retained real replays. Passing
+the check gives strong alignment evidence, but does not prove every format
+version, skipped section, or semantic rule is correct.
 
-Source of truth for the format is the plugin itself:
-`cs2kz-metamod/src/kz/replays/{kz_replay.h,data.cpp,compression.cpp}` and
-`protobuf/kz_replay.proto`. `compression.cpp` is vendored here for reference.
-Format version 5 is current; the parser refuses anything newer instead of guessing.
+Source of truth for the format is the plugin itself. The relevant
+[`src/kz/replays` files](https://github.com/KZGlobalTeam/cs2kz-metamod/tree/7bf63fd18f588bd69e91c9236eb44392be57ec11/src/kz/replays)
+and [`protobuf/kz_replay.proto`](https://github.com/KZGlobalTeam/cs2kz-metamod/blob/7bf63fd18f588bd69e91c9236eb44392be57ec11/protobuf/kz_replay.proto)
+are linked at an immutable upstream revision. The tick decoder is a JavaScript port
+of that AGPL-3.0-licensed implementation; the original C++ file is not vendored
+here. Format version 5 is the newest version this parser supports;
+the parser refuses anything newer instead of guessing.
 
 ## Where the data comes from
 

@@ -24,16 +24,13 @@
 //
 // The result is one small texture for an entire map. At 1024 it is about 250 KB.
 
-import { execFile } from "node:child_process";
 import { readFile, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import sharp from "sharp";
 import { HALF_TO_FLOAT, encodeSrgb } from "./tonemap.js";
 import { EXRLoader } from "three/addons/loaders/EXRLoader.js";
-
-const run = promisify(execFile);
+import { runTool as run } from "./toolProcess.js";
 
 // The dumps print one line per file and a lightmap set has a dozen.
 const BIG_OUTPUT = { maxBuffer: 64 * 1024 * 1024 };

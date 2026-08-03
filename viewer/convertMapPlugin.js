@@ -31,6 +31,32 @@ export const convertMapPlugin = () => ({
     let running = null;
 
     server.middlewares.use("/api/convert-map", async (request, response) => {
+      if (request.method !== "POST") {
+        response.setHeader("allow", "POST");
+        send(response, 405, { error: "use POST to convert a map" });
+        return;
+      }
+
+      // A browser may reach a developer's loopback server from an unrelated page.
+      // Require its Origin to name this Vite host before allowing a request that
+      // downloads data and starts local executables. Requests without Origin remain
+      // available to curl and other deliberate local tooling.
+      const origin = request.headers.origin;
+      if (origin) {
+        let originHost = null;
+        try {
+          originHost = new URL(origin).host;
+        } catch {
+          // An invalid Origin is never a same-origin request.
+        }
+        if (!originHost || originHost !== request.headers.host) {
+          send(response, 403, {
+            error: "cross-origin conversion is not allowed",
+          });
+          return;
+        }
+      }
+
       const url = new URL(request.url ?? "", "http://localhost");
       const name = url.searchParams.get("name") ?? "";
 

@@ -13,7 +13,6 @@
 // Alignment with a replay is handled in the viewer, not here: see the two
 // correction constants in viewer/src/player.js.
 
-import { execFile } from "node:child_process";
 import {
   mkdir,
   copyFile,
@@ -27,7 +26,6 @@ import {
 import { existsSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import sharp from "sharp";
 import { trimMap } from "./trimMap.js";
 import { buildLightmap } from "./mapLightmap.js";
@@ -40,8 +38,7 @@ import {
   syncCs2Index,
 } from "./cs2Content.js";
 import { CS2_DIR } from "./config.js";
-
-const run = promisify(execFile);
+import { runTool as run } from "./toolProcess.js";
 
 const STEAMCMD_APP_ID = "730";
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");

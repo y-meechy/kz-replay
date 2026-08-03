@@ -38,6 +38,7 @@ import { open, mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { decompress } from "fzstd";
+import { TOOL_TIMEOUT_MS } from "./toolProcess.js";
 
 // Steam wraps a chunk in one of two containers, and a depot mixes them freely: of the
 // 111 chunks of pak01_286.vpk, one was zstd and the rest LZMA. Both end in a two byte
@@ -72,7 +73,12 @@ const inflateLzma = async (properties, body, size) => {
     const xz = execFile(
       "xz",
       ["--format=lzma", "--decompress", "--stdout"],
-      { encoding: "buffer", maxBuffer: 1 << 28 },
+      {
+        encoding: "buffer",
+        maxBuffer: 1 << 28,
+        timeout: TOOL_TIMEOUT_MS,
+        killSignal: "SIGTERM",
+      },
       (error, stdout) =>
         error
           ? reject(

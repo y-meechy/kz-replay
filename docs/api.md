@@ -1,8 +1,9 @@
 # Linking and API reference
 
-Everything the viewer shows lives in the URL, so every run is a link you can
-send someone. The live instance is at **https://demo.kzcomp.com** and serves
-this same reference at [/docs](https://demo.kzcomp.com/docs).
+Everything the viewer shows lives in the URL, so every available run is a link
+you can send someone. The live instance is at **https://demo.kzcomp.com** and
+serves a shorter linking guide at [/docs](https://demo.kzcomp.com/docs). This
+file is the complete URL and HTTP reference.
 
 ## Watch a run
 
@@ -11,7 +12,8 @@ this same reference at [/docs](https://demo.kzcomp.com/docs).
 ```
 
 `<record id>` is a CS2KZ record id (a UUID, the same id the API and
-`replays.cs2kz.org` use).
+`replays.cs2kz.org` use). A valid id does not guarantee that its replay is still
+retained; the viewer reports when the replay bucket returns 404.
 
 Example: `https://demo.kzcomp.com/watch?ids=019ee775-a4c7-7b23-9507-ead26ff08f19`
 
@@ -56,6 +58,7 @@ static viewer:
 
 ```
 GET  /replay/<record id>        proxy to replays.cs2kz.org (which sends no CORS headers)
+HEAD /replay/<record id>        check replay availability without downloading its body
 GET  /api/views?ids=<id>,<id>   view counts for those runs, plus the total
 POST /api/views/<id>            count one view
 ```
@@ -63,8 +66,14 @@ POST /api/views/<id>            count one view
 A view is counted once the run has actually played for a few seconds, once per
 browser per run per six hours.
 
+The replay proxy rejects bodies over `KZ_REPLAY_MAX_BYTES` (8,000,000 by default),
+limits simultaneous upstream requests to `KZ_REPLAY_MAX_CONCURRENT` (8), and permits
+`KZ_REPLAY_REQUESTS_PER_MINUTE` (60) requests per client address by default. Public
+deployments should also enforce suitable limits at their trusted reverse proxy.
+
 ## Where the ids come from
 
 - Records: `https://api.cs2kz.org/records` — the `replay_available` field says
   whether a replay file exists.
-- Replay files: `https://replays.cs2kz.org/<record_id>` — public, no auth.
+- Replay files: `https://replays.cs2kz.org/<record_id>` — public, no auth, but
+  not retained for every record indefinitely.

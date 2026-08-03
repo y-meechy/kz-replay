@@ -2,7 +2,7 @@
   "name": "kz-replay",
   "version": "0.1.0",
   "private": true,
-  "license": "GPL-3.0-only",
+  "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",
     "url": "https://github.com/schndrrr/kz-replay.git"
@@ -25,7 +25,8 @@
     "test": "node --test src/*.test.js",
     "check": "node scripts/check-alignment.js",
     "format": "prettier --write \"{src,bin,viewer,scripts}/**/*.{js,html,css}\"",
-    "prepare": "git config core.hooksPath .githooks 2>/dev/null || true"
+    "format:check": "prettier --check \"{src,bin,viewer,scripts}/**/*.{js,html,css}\"",
+    "hooks:install": "git config core.hooksPath .githooks"
   },
   "dependencies": {
     "@gltf-transform/cli": "^4.4.2",
@@ -40,7 +41,7 @@
     "vite": "^5.4.10"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "overrides": {
     "brace-expansion": "^5.0.8",

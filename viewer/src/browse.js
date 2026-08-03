@@ -532,7 +532,11 @@ export const createBrowse = ({ root, onWatch, onFeed }) => {
           target="_blank"
           rel="noopener"
           >ValveResourceFormat</a
-        >). Maps belong to their mappers.`;
+        >). Maps belong to their mappers.
+        <br />
+        <a href="https://github.com/schndrrr/kz-replay" target="_blank" rel="noopener"
+          >Source code and AGPL-3.0 license</a
+        >; provided without warranty.`;
     },
     show() {
       root.hidden = false;
