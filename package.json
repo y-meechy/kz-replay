@@ -2,6 +2,11 @@
   "name": "kz-replay",
   "version": "0.1.0",
   "private": true,
+  "license": "GPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/schndrrr/kz-replay.git"
+  },
   "type": "module",
   "description": "Read CS2KZ .replay files and play the runs back in the browser. No game, no video rendering.",
   "bin": {
@@ -19,7 +24,8 @@
     "refresh": "node bin/kzreplay.js refresh",
     "test": "node --test src/*.test.js",
     "check": "node scripts/check-alignment.js",
-    "format": "prettier --write \"{src,bin,viewer,scripts}/**/*.{js,html,css}\""
+    "format": "prettier --write \"{src,bin,viewer,scripts}/**/*.{js,html,css}\"",
+    "prepare": "git config core.hooksPath .githooks"
   },
   "dependencies": {
     "@gltf-transform/cli": "^4.4.2",

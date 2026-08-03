@@ -8,6 +8,8 @@ viewer/public/tracks/*.json
 
 .playwright-mcp/
 .DS_Store
+.claude/settings.local.json
+.claude/worktrees/
 viewer/public/maps/*.glb
 viewer/public/maps/*.webp
 # The CT character, same as the maps: reproducible with `npm run player-model`, and it is

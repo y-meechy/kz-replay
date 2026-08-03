@@ -1,4 +1,8 @@
-﻿#include "kz_replay.h"
+﻿// Vendored unmodified from cs2kz-metamod (https://github.com/KZGlobalTeam/cs2kz-metamod),
+// src/kz/replays/compression.cpp, as the reference for the .replay format this
+// project parses. cs2kz-metamod is licensed under the GPL-3.0, the same license
+// as this repository; see LICENSE.
+#include "kz_replay.h"
 #include "compression.h"
 #include "filesystem.h"
 #include "vendor/zstd/lib/zstd.h"
