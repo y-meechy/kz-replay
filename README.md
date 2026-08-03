@@ -101,9 +101,10 @@ project's module graph (or package that graph with your own bundler), then call
 ## License
 
 This project is AGPL-3.0-only — see [LICENSE](LICENSE). Its tick decoder is a
-JavaScript port of the AGPL-3.0-licensed
-[cs2kz-metamod source at an immutable revision](https://github.com/KZGlobalTeam/cs2kz-metamod/tree/7bf63fd18f588bd69e91c9236eb44392be57ec11/src/kz/replays);
-the original C++ file is not vendored here. Maps, screenshots, Valve game assets,
+JavaScript port of cs2kz-metamod's AGPL-3.0-licensed
+[`compression.cpp`](https://github.com/KZGlobalTeam/cs2kz-metamod/blob/7bf63fd18f588bd69e91c9236eb44392be57ec11/src/kz/replays/compression.cpp)
+at immutable commit `7bf63fd`; the original C++ file is not vendored here. Maps,
+screenshots, Valve game assets,
 names, and trademarks may have separate owners and terms. See
 [docs/third-party-notices.md](docs/third-party-notices.md) before redistributing generated
 assets or a pre-populated deployment.
