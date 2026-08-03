@@ -1,55 +1,43 @@
 # kz-replay
 
-Read CS2KZ `.replay` files and play the runs back in the browser with three.js.
-Playback needs no game install or video rendering; optional map and character
-conversion fetches selected game assets. The README and `docs/` explain the how
-and why in depth; this file is the working knowledge you need to change the code
-safely.
-
-Use Node.js 24 LTS and the npm version bundled with it.
+Parse CS2KZ `.replay` files and play runs back in the browser with three.js.
+No game install needed. Node.js 24 LTS.
 
 ## Commands
 
 ```bash
 npm run dev                          # viewer at http://localhost:5180
-npm test                             # node --test src/*.test.js — must pass before pushing
-npm run check                        # alignment sanity check across known run pairs
-npm run format                       # prettier over src, bin, viewer, scripts
-node bin/kzreplay.js wrs --limit 6   # download retained classic world records
-node bin/kzreplay.js verify --limit 60   # parse retained real replays, report desyncs
-node bin/kzreplay.js map kz_victoria # convert a map (needs local tools, see docs/maps.md)
+npm test                             # unit tests — must pass before pushing
+npm run check                        # alignment check across known run pairs
+npm run format                       # prettier (run before committing)
+node bin/kzreplay.js verify --limit 60   # parse real replays; key parser integration check
+node bin/kzreplay.js wrs --limit 6   # download classic world records
+node bin/kzreplay.js map <name>      # convert a map (local tools, docs/maps.md)
+npm run build && npm start           # production build + server
 ```
 
-`node bin/kzreplay.js verify` is an important integration check for the parser:
-the decoder throws unless it lands exactly on the last byte of each section, so
-parsing many real replays catches format and alignment regressions. It is not a
-proof of every version, section, or semantic rule and does not replace the unit
-tests.
+Real replay fixtures live in `samples/`. Run `npm run hooks:install` once to
+enable the repo's git hooks.
+
+`verify` catches format/alignment regressions (decoder throws unless it lands
+on each section's last byte) but does not replace the unit tests.
 
 ## Layout
 
-- `src/` — replay parser, track builder, map pipeline, API client. Many pipeline
-  modules use Node APIs such as `fs`, `path`, and `child_process`. Only the module
-  graph imported by the browser must remain browser-compatible; `track.js` and
-  its current dependencies run in both places.
-- `bin/kzreplay.js` — the CLI. One `commands` object, flags parsed by hand.
-- `viewer/` — Vite app. `viewer/src/player.js` is deliberately framework-free:
-  it takes a canvas and a decoded track, but imports adjacent viewer modules,
-  shared `src/` modules, and Three.js. Port its module graph, not that file alone.
-- `server/index.js` — the production server: static viewer, replay proxy,
-  view counter, nightly refresh.
-- `docs/` — the deeper documentation the README links to.
+- `src/` — parser, track builder, map pipeline, API client. Only the browser-imported
+  module graph (`track.js` + deps) must stay browser-compatible; the rest may use Node APIs.
+- `bin/kzreplay.js` — CLI: one `commands` object, hand-parsed flags.
+- `viewer/` — Vite app. `viewer/src/player.js` is framework-free (canvas + decoded track);
+  it imports viewer modules, shared `src/`, and Three.js — port its module graph, not the file alone.
+- `server/index.js` — production server: static viewer, replay proxy, view counter, nightly refresh.
+- `docs/` — deeper docs.
 
 ## Conventions
 
-- Plain ES modules, no TypeScript, no framework in the viewer.
-- Prettier is the only formatter; run `npm run format` before committing.
-- Commit messages are short imperative sentences describing the change
-  ("Hang the follow camera on a gimbal…"), not conventional-commit prefixes.
-- Comments explain _why_ (the format quirk, the bug that forced the check),
-  not what the next line does. Match the density that is already there.
-- Format version 5 is the newest supported version; the parser refuses newer
-  versions instead of guessing. Source of truth for the replay format is the
-  AGPL-3.0-licensed cs2kz-metamod plugin, and `src/ticks.js` is a port of its tick
-  decoder. Keep the pinned upstream link and attribution in `docs/replay-format.md`
+- Plain ES modules, no TypeScript, no viewer framework. Prettier only.
+- Commits: short imperative sentences, no conventional-commit prefixes.
+- Comments explain _why_ (format quirks, bug that forced a check), not what.
+- Format version 5 is the max supported; parser refuses newer versions.
+- Replay format source of truth: AGPL-3.0 cs2kz-metamod plugin; `src/ticks.js` ports its
+  tick decoder. Keep the pinned upstream link and attribution in `docs/replay-format.md`
   and `docs/third-party-notices.md`.
