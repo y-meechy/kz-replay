@@ -40,26 +40,6 @@ tests.
   view counter, nightly refresh.
 - `docs/` — the deeper documentation the README links to.
 
-## Rules that exist because they were broken once
-
-- **Never let the parser guess.** A wrong field size produces plausible-looking
-  garbage, not an error, so every reader checks it consumed exactly what the
-  header promised and throws otherwise. Keep that property in any new reader.
-- **A replay holds many attempts.** The run is the stretch from the _last_
-  timer start before the finish. Measuring from the first start silently
-  corrupts every derived statistic.
-- **Foliage trimming matches whole words between separators**, never
-  substrings, and never deletes meshes under 150 triangles. A substring match
-  once deleted the floors of kz_grotto.
-- **Generated data is not hand-edited source.** `viewer/public/maps/`,
-  `viewer/public/tracks/`, `samples/`, and `tools/` are ignored caches and build
-  outputs. Four generated JSON snapshots under `viewer/public/data/` are committed
-  as development data and Docker seeds; rebuild them with the CLI rather than
-  editing them by hand.
-- **View counts live in `KZ_STATE_DIR`, not `KZ_DATA_DIR`.** Everything in the
-  data dir is replaceable and reseeded on boot; the view counter is the one
-  file visitors wrote and must survive a redeploy.
-
 ## Conventions
 
 - Plain ES modules, no TypeScript, no framework in the viewer.
