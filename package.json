@@ -24,8 +24,8 @@
     "refresh": "node bin/kzreplay.js refresh",
     "test": "node --test src/*.test.js",
     "check": "node scripts/check-alignment.js",
-    "format": "prettier --write \"{src,bin,viewer,scripts}/**/*.{js,html,css}\"",
-    "format:check": "prettier --check \"{src,bin,viewer,scripts}/**/*.{js,html,css}\"",
+    "format": "prettier --write \"{src,bin,viewer,scripts,server}/**/*.{js,html,css}\"",
+    "format:check": "prettier --check \"{src,bin,viewer,scripts,server}/**/*.{js,html,css}\"",
     "hooks:install": "git config core.hooksPath .githooks"
   },
   "dependencies": {
