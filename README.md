@@ -4,10 +4,12 @@ Watch CS2KZ runs in the browser. No game installed anywhere, no video rendering,
 no upload to YouTube. The replay file goes in, WebGL comes out.
 
 Stage 1 (done): the run as a path in empty space, with a live HUD.
-Stage 2 (working): real map geometry around the run.
+Stage 2 (done): real map geometry, baked lighting and the real sky around the run.
 Stage 3: ghost racing, embedded in the kz-tournament site.
 
-![the run inside the converted map](docs/map-overview.png)
+![watching a run through the runner's eyes, weapon and all](docs/first-person.png)
+
+![the same run in the follow camera, on the CT model](docs/third-person.png)
 
 Map geometry is powered by [Source 2 Viewer](https://s2v.app)
 ([ValveResourceFormat](https://github.com/ValveResourceFormat/ValveResourceFormat)).
@@ -89,6 +91,8 @@ the map's own terrain, not something the trimming did.
 
 In the overview camera the map is drawn semi-transparent. Caves and indoor maps would
 otherwise bury the camera in solid rock; the inside cameras keep it opaque.
+
+![kz_grotto with its own baked lighting](docs/grotto.jpeg)
 
 ### The textures are in the map. So is the lighting. The sky is not.
 
@@ -260,6 +264,8 @@ level edge, it needs no download at all, and nothing reads it yet.
 | `kzreplay verify --limit 60`          | Parse many replays and report any that desync                                       |
 | `kzreplay map kz_victoria`            | Download and convert one map to a web glb, with its own baked lighting and real sky |
 | `kzreplay map kz_victoria --textures` | The same, with the mapper's own surface textures instead of the baked lighting      |
+| `kzreplay refresh [--no-geometry]`    | Rebuild the map and record catalog the viewer browses                               |
+| `kzreplay player-model`               | Borrow the CT character out of CS2 for the third-person camera                      |
 | `kzreplay compare <a> <b>`            | Full stats for two runs, and where the time was lost                                |
 | `npm run check`                       | Section and alignment sanity check across four known run pairs                      |
 
@@ -474,3 +480,9 @@ samples/      cached .replay downloads
 `viewer/src/player.js` is framework-free on purpose: it takes a canvas and a
 decoded track. Moving it into `kz-tournament` later is a React `useEffect` that
 calls `createPlayer()` and `dispose()`, plus a Tailwind pass on the HUD.
+
+## License
+
+GPL-3.0 — see [LICENSE](LICENSE). `compression.cpp` is vendored unmodified from
+[cs2kz-metamod](https://github.com/KZGlobalTeam/cs2kz-metamod) (also GPL-3.0)
+as the reference for the replay format.
