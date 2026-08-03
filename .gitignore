@@ -12,6 +12,7 @@ viewer/public/tracks/*.json
 .claude/worktrees/
 .env
 .env.*
+!.env.example
 *.log
 viewer/public/maps/*.glb
 viewer/public/maps/*.webp

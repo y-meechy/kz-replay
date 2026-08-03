@@ -64,7 +64,6 @@ Downloaded `.replay` files are cached in `samples/` so re-runs need no network.
 - [docs/maps.md](docs/maps.md) — the map pipeline: geometry, textures, baked lighting, the real sky
 - [docs/comparison.md](docs/comparison.md) — how two runs are compared, in the viewer and on the CLI
 - [docs/viewer.md](docs/viewer.md) — browsing, the world record feed, view counts
-- [docs/deployment.md](docs/deployment.md) — the Docker image and the GitHub Actions deploy
 
 ## Layout
 
