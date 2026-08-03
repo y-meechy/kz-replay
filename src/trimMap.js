@@ -206,7 +206,9 @@ export const trimMap = async ({
     withTextures,
     withLightmap: Boolean(lightmap),
   });
-  const texturesFilledIn = withTextures ? await fillInMissingTextures(input) : [];
+  const texturesFilledIn = withTextures
+    ? await fillInMissingTextures(input)
+    : [];
   const io = new NodeIO();
   const document = await io.read(input);
   const root = document.getRoot();

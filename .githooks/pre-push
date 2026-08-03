@@ -1,5 +1,5 @@
 #!/bin/sh
-# Tests run before every push. Installed by `npm install` via the prepare
-# script (git config core.hooksPath .githooks). Skip once with --no-verify.
+# Optional local hook. Enable it explicitly with `npm run hooks:install`.
+# Skip it for a single push with `git push --no-verify`.
 echo "pre-push: running npm test"
 npm test

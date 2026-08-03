@@ -67,7 +67,7 @@ if (watch && stage && statsPanel) {
   row.className = "toggle replay-crosshair-toggle";
   row.innerHTML =
     '<input type="checkbox" id="crosshair-check" />' +
-    '<span>Crosshair</span>' +
+    "<span>Crosshair</span>" +
     '<span class="toggle__status">small CS style</span>';
 
   const movementHudRow = statsPanel.querySelector(".toggle--narrow-only");

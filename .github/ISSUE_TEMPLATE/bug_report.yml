@@ -1,0 +1,36 @@
+name: Bug report
+description: Report reproducible incorrect behavior
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Please do not disclose security vulnerabilities here; follow SECURITY.md.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Include the expected and actual result.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Provide a minimal sequence of commands or a viewer URL without private data.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commit or version
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, browser (if relevant), and Node version.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      render: shell

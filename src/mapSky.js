@@ -16,17 +16,14 @@
 // content cache. See cs2Content.js — a sky costs one 105 MB archive part, once, and
 // several maps share the same sky.
 
-import { execFile } from "node:child_process";
 import { readdir, readFile, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import sharp from "sharp";
 import { EXRLoader } from "three/addons/loaders/EXRLoader.js";
 import { cs2IndexPath } from "./cs2Content.js";
 import { HALF_TO_FLOAT, encodeSrgb } from "./tonemap.js";
-
-const run = promisify(execFile);
+import { runTool as run } from "./toolProcess.js";
 
 const BIG_OUTPUT = { maxBuffer: 64 * 1024 * 1024 };
 

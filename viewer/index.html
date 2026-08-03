@@ -182,7 +182,8 @@
           <div class="marks" id="scrub-marks"></div>
         </div>
         <span class="controls__time"
-          ><span id="elapsed">0:00.000</span> / <span id="total">0:00.000</span></span
+          ><span id="elapsed">0:00.000</span> /
+          <span id="total">0:00.000</span></span
         >
         <div class="segmented" id="rates">
           <button type="button" data-rate="0.25">¼×</button>
@@ -221,7 +222,9 @@
             <dt>space</dt>
             <dd>play / pause</dd>
             <dt>← →</dt>
-            <dd>step</dd>
+            <dd>skip 5 seconds</dd>
+            <dt>shift + ← →</dt>
+            <dd>skip 0.125 seconds</dd>
             <dt>C</dt>
             <dd>camera</dd>
             <dt>M</dt>
@@ -321,7 +324,14 @@
           >ValveResourceFormat</a
         >). The Source 2 file formats are not documented by Valve; everything
         this project knows about them comes from that project's reverse
-        engineering.
+        engineering. The viewer's
+        <a
+          href="https://github.com/schndrrr/kz-replay"
+          target="_blank"
+          rel="noopener"
+          >source code and AGPL-3.0 license</a
+        >
+        are available on GitHub; the software is provided without warranty.
       </p>
     </main>
 

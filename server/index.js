@@ -15,10 +15,8 @@
 // Everything else is the Vite build output, served as files.
 
 import { createServer } from "node:http";
-import { createReadStream } from "node:fs";
-import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { readFile, stat } from "node:fs/promises";
+import { open, readFile, stat } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import {
   DATA_DIR,
@@ -34,17 +32,35 @@ import { writeJsonAtomically } from "../src/geometry.js";
 import { convertPlayerModel } from "../src/playerModelPipeline.js";
 import { refresh } from "../src/refresh.js";
 import { createViewCounter, handleViewsRequest } from "../src/views.js";
+import { createReplayProxy } from "./replayProxy.js";
 
-const PORT = Number(process.env.PORT ?? 8080);
+const integerFromEnv = (name, fallback, { min, max }) => {
+  const raw = process.env[name];
+  const value = raw === undefined ? fallback : Number(raw);
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new Error(`${name} must be an integer between ${min} and ${max}`);
+  }
+  return value;
+};
+
+const PORT = integerFromEnv("PORT", 8080, { min: 1, max: 65_535 });
 const DIST_DIR = process.env.KZ_DIST_DIR
   ? resolve(process.env.KZ_DIST_DIR)
   : join(REPO_ROOT, "viewer", "dist");
 
-const REPLAY_BASE = "https://replays.cs2kz.org";
-const REPLAY_TIMEOUT_MS = 120_000;
-const RECORD_ID =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
+const REPLAY_MAX_BYTES = integerFromEnv("KZ_REPLAY_MAX_BYTES", 8_000_000, {
+  min: 64_000,
+  max: 100_000_000,
+});
+const REPLAY_MAX_CONCURRENT = integerFromEnv("KZ_REPLAY_MAX_CONCURRENT", 8, {
+  min: 1,
+  max: 100,
+});
+const REPLAY_REQUESTS_PER_MINUTE = integerFromEnv(
+  "KZ_REPLAY_REQUESTS_PER_MINUTE",
+  60,
+  { min: 1, max: 10_000 },
+);
 const MIME = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -54,6 +70,8 @@ const MIME = {
   ".kztrack": "application/octet-stream",
   ".png": "image/png",
   ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
   ".svg": "image/svg+xml",
   ".ico": "image/x-icon",
   ".woff2": "font/woff2",
@@ -92,13 +110,18 @@ const safeJoin = (baseDir, urlPath) => {
 };
 
 const sendFile = async (response, path, headOnly = false) => {
-  let info;
+  let file;
   try {
-    info = await stat(path);
+    file = await open(path, "r");
   } catch {
     return false;
   }
-  if (!info.isFile()) return false;
+
+  const info = await file.stat().catch(() => null);
+  if (!info?.isFile()) {
+    await file.close().catch(() => {});
+    return false;
+  }
 
   response.writeHead(200, {
     "content-type": MIME[extname(path)] ?? "application/octet-stream",
@@ -106,10 +129,17 @@ const sendFile = async (response, path, headOnly = false) => {
     "cache-control": cacheControl(path),
   });
   if (headOnly) {
+    await file.close();
     response.end();
     return true;
   }
-  createReadStream(path).pipe(response);
+
+  try {
+    await pipeline(file.createReadStream(), response);
+  } catch (error) {
+    log(`static file ${path} stream broke: ${error.message}`);
+    if (!response.destroyed) response.destroy(error);
+  }
   return true;
 };
 
@@ -122,59 +152,14 @@ const sendJson = (response, status, body) => {
   response.end(text);
 };
 
-/**
- * Stream one replay through from the bucket.
- *
- * The id is checked against the uuid shape before it is put in a url: this endpoint
- * exists to fetch record ids, not to be a general purpose proxy for whatever a
- * visitor types.
- */
-const proxyReplay = async (response, recordId) => {
-  if (!RECORD_ID.test(recordId)) {
-    sendJson(response, 400, { error: "that is not a record id" });
-    return;
-  }
-
-  // The deadline covers headers and the whole body: this is the one public,
-  // unauthenticated endpoint, and a stalled upstream must not hold a socket
-  // open per request until the process runs out of them.
-  const upstream = await fetch(`${REPLAY_BASE}/${recordId}`, {
-    signal: AbortSignal.timeout(REPLAY_TIMEOUT_MS),
-  }).catch((error) => {
-    log(`replay ${recordId} unreachable: ${error.message}`);
-    return null;
-  });
-
-  if (!upstream) {
-    sendJson(response, 502, { error: "the replay bucket is unreachable" });
-    return;
-  }
-  if (!upstream.ok) {
-    sendJson(response, upstream.status, {
-      error:
-        upstream.status === 404
-          ? "no replay stored for that record"
-          : `the replay bucket returned ${upstream.status}`,
-    });
-    return;
-  }
-
-  response.writeHead(200, {
-    "content-type": "application/octet-stream",
-    // A replay file for a given record never changes, so it can be cached hard.
-    "cache-control": "public, max-age=604800, immutable",
-  });
-  // pipeline() rather than a write loop: it waits for the response socket to
-  // drain, so a slow client buffers on its own connection instead of in this
-  // process, and it tears both streams down on either side failing. The abort
-  // signal above also fires mid-body, so a trickling upstream surfaces here.
-  try {
-    await pipeline(Readable.fromWeb(upstream.body), response);
-  } catch (error) {
-    log(`replay ${recordId} stream broke: ${error.message}`);
-    response.destroy();
-  }
-};
+// The proxy is an SSRF boundary: only UUIDs are accepted, and unauthenticated
+// clients have body-size, concurrency and per-address limits.
+const proxyReplay = createReplayProxy({
+  maxBytes: REPLAY_MAX_BYTES,
+  maxConcurrent: REPLAY_MAX_CONCURRENT,
+  requestsPerMinute: REPLAY_REQUESTS_PER_MINUTE,
+  log: (message) => log(message),
+});
 
 // --- the nightly job --------------------------------------------------------
 //
@@ -182,11 +167,20 @@ const proxyReplay = async (response, recordId) => {
 // that matters is "roughly 03:30 every night". The timer is re-armed after each run
 // so a long conversion pushing past the hour cannot make two runs overlap.
 
-const REFRESH_HOUR = Number(process.env.KZ_REFRESH_HOUR ?? 3);
-const REFRESH_MINUTE = Number(process.env.KZ_REFRESH_MINUTE ?? 30);
+const REFRESH_HOUR = integerFromEnv("KZ_REFRESH_HOUR", 3, {
+  min: 0,
+  max: 23,
+});
+const REFRESH_MINUTE = integerFromEnv("KZ_REFRESH_MINUTE", 30, {
+  min: 0,
+  max: 59,
+});
+const GEOMETRY_MINUTES = integerFromEnv("KZ_GEOMETRY_MINUTES", 240, {
+  min: 1,
+  max: 24 * 60,
+});
 
 let refreshing = false;
-let lastRefresh = null;
 
 const runRefresh = async (reason) => {
   if (refreshing) {
@@ -198,18 +192,11 @@ const runRefresh = async (reason) => {
   try {
     await refresh({
       geometry: process.env.KZ_CONVERT_MAPS !== "false",
-      geometryBudgetMs: Number(process.env.KZ_GEOMETRY_MINUTES ?? 240) * 60_000,
+      geometryBudgetMs: GEOMETRY_MINUTES * 60_000,
       log: (message) => log(`  ${message}`),
     });
-    lastRefresh = { at: new Date().toISOString(), reason, ok: true };
   } catch (error) {
     log(`refresh failed: ${error.stack ?? error.message}`);
-    lastRefresh = {
-      at: new Date().toISOString(),
-      reason,
-      ok: false,
-      error: error.message,
-    };
   } finally {
     refreshing = false;
   }
@@ -336,17 +323,17 @@ const handle = async (request, response) => {
   const path = url.pathname;
 
   if (path === "/healthz") {
-    sendJson(response, 200, {
-      ok: true,
-      refreshing,
-      lastRefresh,
-      views: views.stats(),
-    });
+    sendJson(response, 200, { ok: true, refreshing });
     return;
   }
 
   if (path.startsWith("/replay/")) {
-    await proxyReplay(response, path.slice("/replay/".length));
+    await proxyReplay(
+      request,
+      response,
+      path.slice("/replay/".length),
+      headOnly,
+    );
     return;
   }
 
@@ -368,8 +355,8 @@ const handle = async (request, response) => {
   const asset = safeJoin(DIST_DIR, path === "/" ? "index.html" : path);
   if (asset && (await sendFile(response, asset, headOnly))) return;
 
-  // Everything else is the single page app. Routing is by hash, so this only ever
-  // catches a bad path, but serving the app is friendlier than a bare 404.
+  // Everything else is the single-page app. Known routes use the History API, and
+  // serving the app for an unknown path is friendlier than a bare 404.
   if (await sendFile(response, join(DIST_DIR, "index.html"), headOnly)) return;
   sendJson(response, 404, {
     error: "no build found — run npm run build first",

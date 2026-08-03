@@ -3,9 +3,13 @@
 .DS_Store
 node_modules
 viewer/dist
+viewer/public/maps/*
+!viewer/public/maps/.gitkeep
+viewer/public/models/*
+!viewer/public/models/.gitkeep
+viewer/public/tracks/*
 tools
 samples
 docs
 README.md
 npm-debug.log*
-

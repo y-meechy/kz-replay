@@ -1,6 +1,6 @@
 # The map pipeline
 
-`kzreplay map <name>` turns a Steam Workshop map into a small `.glb` the viewer
+`node bin/kzreplay.js map <name>` turns a Steam Workshop map into a small `.glb` the viewer
 can draw, with the map's own baked lighting and its real sky. Everything here is
 powered by [Source 2 Viewer](https://s2v.app)
 ([ValveResourceFormat](https://github.com/ValveResourceFormat/ValveResourceFormat)) —
@@ -9,12 +9,13 @@ project knows about them comes from that project's reverse engineering.
 
 ## Tools it needs
 
-The map step needs three tools that are not npm packages:
+The full map step needs four tools that are not npm packages:
 
 - `steamcmd` (`brew install steamcmd`) — downloads the workshop map. No Steam account and no CS2 install: anonymous login is enough.
 - `tools/Source2Viewer-CLI` — download `cli-macos-arm64.zip` (or your platform) from the [ValveResourceFormat releases](https://github.com/ValveResourceFormat/ValveResourceFormat/releases) and unzip it into `tools/`.
 - `tools/DepotDownloader` — download the build for your platform from the [DepotDownloader releases](https://github.com/SteamRE/DepotDownloader/releases) and unzip it into `tools/`. Only the sky needs this, and only anonymously; `--no-sky` skips it.
-- `xz`, for the LZMA half of the depot's chunks. Already on macOS and in the image.
+- `xz`, for the LZMA half of the depot's chunks. The Docker image includes it;
+  on macOS install it separately, for example with `brew install xz`.
 
 For chunk-level fetching, which makes a sky cost 1 MB instead of 105, run
 `pip install 'steam[client]'` and `python3 scripts/cs2-depot-key.py tools/cs2` once. Without
@@ -35,9 +36,10 @@ The raw exports are enormous — kz_victoria 27 MB, kz_grotto 175 MB, kz_moss **
 before anything is compressed, and neither moves a single vertex:
 
 - **Attributes nobody reads.** The exporter writes POSITION, NORMAL, TANGENT,
-  TEXCOORD_0, TEXCOORD_1, COLOR_0 and more for every vertex. The viewer needs
-  POSITION, plus the lightmap UV when the map ships baked lighting: six or seven
-  streams get dropped, roughly 70 bytes per vertex down to 12 or 16.
+  TEXCOORD_0, TEXCOORD_1, COLOR_0 and more for every vertex. A geometry-only map
+  needs POSITION; textured, lit maps retain NORMAL and both UV sets because the
+  surface texture and lightmap address different atlases. Tangents, vertex colours,
+  and other unused streams are still dropped.
 - **Foliage.** The ten biggest meshes in kz_moss are poplar branches, dogwood
   branches and cypress trees. Leaves are millions of triangles a KZ player runs
   straight through, and they hide the level behind them.
@@ -91,11 +93,12 @@ exactly what "the textures are not in the workshop item" looked like.
 | real textures at 128 px  | 2.8 MB      |
 | the map's baked lighting | 2.6 MB      |
 
-Texture pixels are nearly free: 64 px and 128 px differ by 90 KB, because the cost is
-the extra vertex streams a texture needs, not the images. Both builds pay that once, and
-for now they are alternatives rather than a pair — the trim pass keeps one texture
-coordinate set. Textures are the default; `--no-textures` gives the surface
-coordinate set back to the baked lighting.
+Texture pixels are nearly free: 64 px and 128 px differ by 90 KB, because much of
+the cost is the extra vertex data a texture needs, not the images. The default build
+keeps both coordinate sets: `TEXCOORD_0` addresses the repeating surface texture and
+`TEXCOORD_1` addresses baked lighting. Textures and baked lighting therefore work
+together. `--no-textures` removes mapper surface textures without disabling the
+lightmap; `--no-lightmap` does the reverse.
 
 **Surfaces with nothing to draw fall back to a colour.** Two kinds of surface come out
 of a textured export with no material: the shaders glTF has no room for, like water, and
@@ -150,8 +153,9 @@ own gradient was already faking. So it is a straight swap of a guess for the rea
 and at 1024×512 it is **3 KB** of WebP, written beside the map as `<map>.sky.webp`
 because glTF has no slot for a background.
 
-The material carries the map's real sun as well, `SolarPosition` and `SolarIrradiance`,
-which is the one number in all of this lighting that is currently invented.
+The material carries `SolarPosition` and `SolarIrradiance` metadata as well. The
+pipeline extracts those values, but the viewer does not currently apply them to
+scene lights; its directional lighting remains an approximation.
 
 **Skies are the one thing that needs the game.** They are base game assets, and the CS2
 content depot is 52 GB to download and 61 GB on disk, so `src/cs2Content.js` borrows

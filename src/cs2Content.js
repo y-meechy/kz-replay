@@ -28,7 +28,6 @@
 // sits in. That needs the CDN protocol rather than a CLI, and 105 MB once per part is
 // not worth it yet.
 
-import { execFile } from "node:child_process";
 import {
   mkdir,
   readdir,
@@ -39,11 +38,10 @@ import {
 } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { fetchRangesInto, readDepotAccess } from "./cs2Chunks.js";
 import { findCachedManifest, readManifestFiles } from "./cs2Manifest.js";
 
-const run = promisify(execFile);
+import { runTool as run } from "./toolProcess.js";
 
 const CS2_APP_ID = "730";
 
