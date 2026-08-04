@@ -169,10 +169,11 @@ export const createGuessrScene = ({ canvas }) => {
 
   // --- render loop -------------------------------------------------------
   let running = true;
+  let paused = false;
   let lastTime = performance.now();
 
   const tick = (now) => {
-    if (!running) return;
+    if (!running || paused) return;
     const delta = Math.min((now - lastTime) / 1000, 0.25);
     lastTime = now;
     orbit.update(delta);
@@ -180,6 +181,18 @@ export const createGuessrScene = ({ canvas }) => {
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
+
+  // The scene stays alive while the player browses other pages (rebuilding a
+  // WebGL context per visit is worse), but a hidden page should not keep
+  // burning GPU frames — the game page pauses it on hide.
+  const setPaused = (value) => {
+    if (paused === value) return;
+    paused = value;
+    if (!paused) {
+      lastTime = performance.now();
+      requestAnimationFrame(tick);
+    }
+  };
 
   const dispose = () => {
     running = false;
@@ -191,5 +204,5 @@ export const createGuessrScene = ({ canvas }) => {
     renderer.dispose();
   };
 
-  return { setChunk, showRoute, resetCamera, dispose };
+  return { setChunk, showRoute, resetCamera, setPaused, dispose };
 };

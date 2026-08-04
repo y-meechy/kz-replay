@@ -333,6 +333,7 @@ export const createGuessr = ({ root, maps, onExit }) => {
 
     show(seed = null) {
       root.hidden = false;
+      scene?.setPaused(false);
       if (!manifest.rounds?.length) return;
 
       const requested = seed != null ? Number(seed) : null;
@@ -345,6 +346,9 @@ export const createGuessr = ({ root, maps, onExit }) => {
 
     hide() {
       root.hidden = true;
+      // The scene survives navigation (recreating a WebGL context is worse),
+      // but it must not keep rendering behind a hidden page.
+      scene?.setPaused(true);
     },
   };
 };

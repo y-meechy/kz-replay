@@ -3,7 +3,7 @@
 // converted map plus the run's route through it, and write the pair the viewer
 // needs to play a round without ever loading the whole map.
 
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -281,14 +281,14 @@ export const buildGuessrRounds = async ({
   // rounds built earlier disappear from the manifest. It carries no answer data:
   // someone skimming the network tab must not be able to read it off this file.
   const manifestRounds = [];
-  for (const round of chosen) {
-    const id = chunkId(round.mapName, round.courseName, round.board);
-    const chunkPath = join(GUESSR_DIR, `${id}.json`);
-    if (!existsSync(chunkPath)) continue;
-    const chunkData = JSON.parse(await readFile(chunkPath, "utf8"));
+  for (const name of (await readdir(GUESSR_DIR)).sort()) {
+    if (!name.endsWith(".json")) continue;
+    const chunkData = JSON.parse(
+      await readFile(join(GUESSR_DIR, name), "utf8"),
+    );
     manifestRounds.push({
-      id,
-      file: `/data/guessr/${id}.json`,
+      id: chunkData.id,
+      file: `/data/guessr/${name}`,
       triangles: chunkData.triangles,
     });
   }
