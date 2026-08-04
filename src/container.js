@@ -23,6 +23,7 @@ import { decompress } from "fzstd";
 import { decodeHeader } from "./header.js";
 
 const SECTION_HEADER_SIZE = 12;
+const MAX_INFLATED_SECTION_SIZE = 256 * 1024 * 1024;
 
 /** The order sections appear in the file, as read by LoadReplay in data.cpp. */
 export const SECTION_NAMES = [
@@ -71,8 +72,8 @@ class Cursor {
  * Split a .replay buffer into its header and its raw sections.
  *
  * Sections are returned lazily-decompressed: `section.data()` inflates on demand
- * so callers can skip the big ones (subtick and cmd data are ~6 MB each and we
- * do not use them).
+ * so callers can skip the big ones (subtick and cmd data can be hundreds of MB
+ * and we do not use them).
  */
 export const openReplay = (buffer) => {
   const cursor = new Cursor(new Uint8Array(buffer));
@@ -93,14 +94,6 @@ export const openReplay = (buffer) => {
     const compressedSize = cursor.u32();
     const uncompressedSize = cursor.u32();
     const elementCount = cursor.u32();
-    // The biggest real section (subticks) is a few MB. A u32 can claim 4 GB,
-    // and data() allocates the claimed size up front, so an implausible number
-    // is refused here rather than handed to the allocator.
-    if (uncompressedSize > 256 * 1024 * 1024) {
-      throw new Error(
-        `section "${name}" claims ${uncompressedSize} bytes uncompressed, refusing`,
-      );
-    }
     const compressed = cursor.take(compressedSize);
 
     sections[name] = {
@@ -109,6 +102,14 @@ export const openReplay = (buffer) => {
       uncompressedSize,
       elementCount,
       data: () => {
+        // Some valid replays contain enormous subtick sections that callers do
+        // not use. Keep them skippable without handing a claimed u32 size to the
+        // allocator when a caller does request their contents.
+        if (uncompressedSize > MAX_INFLATED_SECTION_SIZE) {
+          throw new Error(
+            `section "${name}" claims ${uncompressedSize} bytes uncompressed, refusing`,
+          );
+        }
         const inflated = decompress(
           compressed,
           new Uint8Array(uncompressedSize),
