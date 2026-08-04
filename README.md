@@ -8,13 +8,13 @@ player-model conversion fetches selected Workshop and Counter-Strike 2 assets.
 scrollable [world record feed](https://demo.kzcomp.com/wr), and a player that
 opens any retained replay by id and can race two runs against each other.
 
-![watching a run through the runner's eyes, weapon and all](docs/first-person.png)
+![watching a run through the runner's eyes](docs/first-person.png)
 
-_kz_victoria — [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3086304337)._
+_kz_niche by ReDMooN — [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3160291769)._
 
 ![the same run in the follow camera, on the CT model](docs/third-person.png)
 
-_kz_victoria — [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3086304337)._
+_kz_niche by ReDMooN — [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3160291769)._
 
 It reads the CS2KZ `.replay` format directly, rebuilds the run tick by tick, and
 plays it back in three.js — through the runner's eyes, from a follow camera, or
