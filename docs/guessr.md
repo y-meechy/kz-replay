@@ -80,11 +80,15 @@ lowered by `size × 0.15` on the vertical axis — un-lowered, the box would be
 centred on head height, and its floor would sit just below the box's own
 midline instead of inside it.
 
-A candidate is accepted once its chunk has at least 24 triangles and geometry
+A candidate qualifies once its chunk has at least 60 triangles and geometry
 from at least 3 separate mesh nodes ("about 3 brushes" — enough that the chunk
 reads as a piece of level, not one lone floor slab that happens to clear a
-triangle count). If none of the seven candidates for a map/course clear that
-bar, the map/course is skipped and reported as a failure — `kz_avalon`,
+triangle count); among the qualifying candidates, the one with the most
+triangles wins, so the box lands on the busiest spot the route passes. If none
+of the seven candidates qualify, the builder retries the whole selection with a
+1.5× and then 2× box (sparse open maps often have no dense spot at the default
+size, but a bigger box brings the surrounding structure into view). Only when
+that fails too is the map/course skipped and reported — `kz_avalon`,
 `kz_cherry`, and `kz_kuutio`, among others, currently have too little geometry
 within reach of their routes to ever pass.
 

@@ -238,16 +238,25 @@ export const buildGuessrRounds = async ({
       const track = decodeTrack(bytes.buffer);
 
       const meshes = await loadMeshesCached(mapName);
-      const chunk = pickChunk({
-        meshes,
-        route: track.positions,
-        tickRange: {
-          leadIn: track.leadIn,
-          leadOut: track.leadOut,
-          count: track.count,
-        },
-        size,
-      });
+      const tickRange = {
+        leadIn: track.leadIn,
+        leadOut: track.leadOut,
+        count: track.count,
+      };
+      // Sparse open maps often have no dense spot at the default size; a bigger
+      // box brings in the surrounding structure instead of dropping the round.
+      let chunk = null;
+      let chunkSize = size;
+      for (const scale of [1, 1.5, 2]) {
+        chunkSize = size * scale;
+        chunk = pickChunk({
+          meshes,
+          route: track.positions,
+          tickRange,
+          size: chunkSize,
+        });
+        if (chunk) break;
+      }
 
       if (!chunk) {
         failures.push({
@@ -263,7 +272,7 @@ export const buildGuessrRounds = async ({
         chunkPath,
         {
           id,
-          size,
+          size: chunkSize,
           triangles: chunk.triangles,
           positions: chunk.positions,
           route: chunk.routePositions,

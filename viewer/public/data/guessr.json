@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-04T10:58:11.120Z",
+  "updatedAt": "2026-08-04T11:42:03.177Z",
   "chunkSize": 512,
   "rounds": [
     {
@@ -10,7 +10,7 @@
     {
       "id": "099bbd283c2d",
       "file": "/data/guessr/099bbd283c2d.json",
-      "triangles": 46
+      "triangles": 60
     },
     {
       "id": "09f2859f98c4",
@@ -20,97 +20,82 @@
     {
       "id": "0cab6f1f4f02",
       "file": "/data/guessr/0cab6f1f4f02.json",
-      "triangles": 37
-    },
-    {
-      "id": "0d81c47d3377",
-      "file": "/data/guessr/0d81c47d3377.json",
-      "triangles": 32
+      "triangles": 76
     },
     {
       "id": "0f39f2e560d5",
       "file": "/data/guessr/0f39f2e560d5.json",
-      "triangles": 54
+      "triangles": 62
     },
     {
       "id": "103faf09cc61",
       "file": "/data/guessr/103faf09cc61.json",
-      "triangles": 368
+      "triangles": 392
     },
     {
       "id": "1375371e6fae",
       "file": "/data/guessr/1375371e6fae.json",
-      "triangles": 30
-    },
-    {
-      "id": "13f9e3dbbc0d",
-      "file": "/data/guessr/13f9e3dbbc0d.json",
-      "triangles": 28
+      "triangles": 71
     },
     {
       "id": "163150556747",
       "file": "/data/guessr/163150556747.json",
-      "triangles": 46
+      "triangles": 79
     },
     {
       "id": "1bc3405607e6",
       "file": "/data/guessr/1bc3405607e6.json",
-      "triangles": 52
+      "triangles": 66
     },
     {
       "id": "1e55286b0055",
       "file": "/data/guessr/1e55286b0055.json",
-      "triangles": 158
+      "triangles": 183
     },
     {
       "id": "20e49eec0a86",
       "file": "/data/guessr/20e49eec0a86.json",
-      "triangles": 124
+      "triangles": 154
     },
     {
       "id": "21c53cfe13fc",
       "file": "/data/guessr/21c53cfe13fc.json",
-      "triangles": 58
+      "triangles": 96
     },
     {
       "id": "26783739e920",
       "file": "/data/guessr/26783739e920.json",
-      "triangles": 52
+      "triangles": 104
     },
     {
       "id": "26bd14c52835",
       "file": "/data/guessr/26bd14c52835.json",
-      "triangles": 91
+      "triangles": 125
     },
     {
       "id": "272c55218058",
       "file": "/data/guessr/272c55218058.json",
-      "triangles": 118
+      "triangles": 124
     },
     {
       "id": "28a2f853117e",
       "file": "/data/guessr/28a2f853117e.json",
-      "triangles": 48
+      "triangles": 62
     },
     {
       "id": "2b5ac0e32858",
       "file": "/data/guessr/2b5ac0e32858.json",
-      "triangles": 92
+      "triangles": 112
     },
     {
       "id": "337f66ed368c",
       "file": "/data/guessr/337f66ed368c.json",
-      "triangles": 380
+      "triangles": 477
     },
     {
       "id": "338d5df566ce",
       "file": "/data/guessr/338d5df566ce.json",
-      "triangles": 42
-    },
-    {
-      "id": "349f48cdfeb1",
-      "file": "/data/guessr/349f48cdfeb1.json",
-      "triangles": 24
+      "triangles": 92
     },
     {
       "id": "357383794ca5",
@@ -120,87 +105,67 @@
     {
       "id": "3696eced884c",
       "file": "/data/guessr/3696eced884c.json",
-      "triangles": 116
+      "triangles": 175
     },
     {
       "id": "373373be1d14",
       "file": "/data/guessr/373373be1d14.json",
-      "triangles": 122
+      "triangles": 158
     },
     {
       "id": "386081f6840c",
       "file": "/data/guessr/386081f6840c.json",
-      "triangles": 42
+      "triangles": 66
     },
     {
       "id": "3bd91ae4f65d",
       "file": "/data/guessr/3bd91ae4f65d.json",
-      "triangles": 96
+      "triangles": 98
     },
     {
-      "id": "3f4cb7d0a414",
-      "file": "/data/guessr/3f4cb7d0a414.json",
-      "triangles": 24
-    },
-    {
-      "id": "3f7ede987c6c",
-      "file": "/data/guessr/3f7ede987c6c.json",
-      "triangles": 26
+      "id": "4914d4624478",
+      "file": "/data/guessr/4914d4624478.json",
+      "triangles": 61
     },
     {
       "id": "4aa8367a9f85",
       "file": "/data/guessr/4aa8367a9f85.json",
-      "triangles": 26
+      "triangles": 60
     },
     {
       "id": "4d4880ff97e0",
       "file": "/data/guessr/4d4880ff97e0.json",
-      "triangles": 46
-    },
-    {
-      "id": "50e27380b624",
-      "file": "/data/guessr/50e27380b624.json",
-      "triangles": 28
+      "triangles": 68
     },
     {
       "id": "51773d8b74ad",
       "file": "/data/guessr/51773d8b74ad.json",
-      "triangles": 116
+      "triangles": 122
     },
     {
       "id": "53b20c10498c",
       "file": "/data/guessr/53b20c10498c.json",
-      "triangles": 38
+      "triangles": 78
     },
     {
       "id": "53dfdc6e9384",
       "file": "/data/guessr/53dfdc6e9384.json",
-      "triangles": 42
-    },
-    {
-      "id": "57b60d0189d7",
-      "file": "/data/guessr/57b60d0189d7.json",
-      "triangles": 31
+      "triangles": 74
     },
     {
       "id": "58897daaa15e",
       "file": "/data/guessr/58897daaa15e.json",
-      "triangles": 168
-    },
-    {
-      "id": "5b2fea5b4c25",
-      "file": "/data/guessr/5b2fea5b4c25.json",
-      "triangles": 24
+      "triangles": 174
     },
     {
       "id": "5e99e5a79576",
       "file": "/data/guessr/5e99e5a79576.json",
-      "triangles": 28
+      "triangles": 82
     },
     {
       "id": "606949c6b1a6",
       "file": "/data/guessr/606949c6b1a6.json",
-      "triangles": 46
+      "triangles": 74
     },
     {
       "id": "6304420c45f1",
@@ -210,57 +175,57 @@
     {
       "id": "6ce937886ff2",
       "file": "/data/guessr/6ce937886ff2.json",
-      "triangles": 52
+      "triangles": 62
     },
     {
       "id": "6e6b59fe7752",
       "file": "/data/guessr/6e6b59fe7752.json",
-      "triangles": 57
+      "triangles": 163
     },
     {
       "id": "6ec36a1948f5",
       "file": "/data/guessr/6ec36a1948f5.json",
-      "triangles": 24
+      "triangles": 62
     },
     {
       "id": "710980d972b5",
       "file": "/data/guessr/710980d972b5.json",
-      "triangles": 143
+      "triangles": 277
     },
     {
       "id": "74bf526fcbb3",
       "file": "/data/guessr/74bf526fcbb3.json",
-      "triangles": 42
+      "triangles": 72
     },
     {
       "id": "752f3e1aeb9c",
       "file": "/data/guessr/752f3e1aeb9c.json",
-      "triangles": 48
+      "triangles": 84
     },
     {
       "id": "76d8ad0b7528",
       "file": "/data/guessr/76d8ad0b7528.json",
-      "triangles": 46
+      "triangles": 82
     },
     {
       "id": "77154c9a7445",
       "file": "/data/guessr/77154c9a7445.json",
-      "triangles": 31
+      "triangles": 72
     },
     {
       "id": "77f78dac3332",
       "file": "/data/guessr/77f78dac3332.json",
-      "triangles": 54
+      "triangles": 64
     },
     {
       "id": "79add205a1d6",
       "file": "/data/guessr/79add205a1d6.json",
-      "triangles": 46
+      "triangles": 158
     },
     {
       "id": "7c6625334aaa",
       "file": "/data/guessr/7c6625334aaa.json",
-      "triangles": 56
+      "triangles": 100
     },
     {
       "id": "7f7d8c9f9882",
@@ -270,22 +235,22 @@
     {
       "id": "81b8998b1304",
       "file": "/data/guessr/81b8998b1304.json",
-      "triangles": 42
+      "triangles": 80
     },
     {
       "id": "82591fd34cbe",
       "file": "/data/guessr/82591fd34cbe.json",
-      "triangles": 52
+      "triangles": 82
     },
     {
       "id": "835fa7dc4d8b",
       "file": "/data/guessr/835fa7dc4d8b.json",
-      "triangles": 35
+      "triangles": 72
     },
     {
       "id": "85c9c9c2d35f",
       "file": "/data/guessr/85c9c9c2d35f.json",
-      "triangles": 113
+      "triangles": 195
     },
     {
       "id": "8916d421dc35",
@@ -295,37 +260,22 @@
     {
       "id": "8e81653c2b36",
       "file": "/data/guessr/8e81653c2b36.json",
-      "triangles": 43
-    },
-    {
-      "id": "926213f4b321",
-      "file": "/data/guessr/926213f4b321.json",
-      "triangles": 24
+      "triangles": 68
     },
     {
       "id": "9312d8d9b61b",
       "file": "/data/guessr/9312d8d9b61b.json",
-      "triangles": 36
+      "triangles": 60
     },
     {
       "id": "9449c552ec2b",
       "file": "/data/guessr/9449c552ec2b.json",
-      "triangles": 72
-    },
-    {
-      "id": "94a50ed12366",
-      "file": "/data/guessr/94a50ed12366.json",
-      "triangles": 36
+      "triangles": 153
     },
     {
       "id": "94b39ee676d8",
       "file": "/data/guessr/94b39ee676d8.json",
-      "triangles": 30
-    },
-    {
-      "id": "9654bb8a3c1d",
-      "file": "/data/guessr/9654bb8a3c1d.json",
-      "triangles": 38
+      "triangles": 66
     },
     {
       "id": "967dd0282602",
@@ -333,14 +283,9 @@
       "triangles": 94
     },
     {
-      "id": "9c0b2860d931",
-      "file": "/data/guessr/9c0b2860d931.json",
-      "triangles": 24
-    },
-    {
       "id": "9c9387c38545",
       "file": "/data/guessr/9c9387c38545.json",
-      "triangles": 36
+      "triangles": 80
     },
     {
       "id": "9fa7ca3c7652",
@@ -350,12 +295,12 @@
     {
       "id": "a8afa418fdc0",
       "file": "/data/guessr/a8afa418fdc0.json",
-      "triangles": 232
+      "triangles": 273
     },
     {
       "id": "aa7d99b01301",
       "file": "/data/guessr/aa7d99b01301.json",
-      "triangles": 70
+      "triangles": 138
     },
     {
       "id": "ab9fa6b2f902",
@@ -365,7 +310,7 @@
     {
       "id": "abb79b8748a4",
       "file": "/data/guessr/abb79b8748a4.json",
-      "triangles": 25
+      "triangles": 87
     },
     {
       "id": "aff469509ab2",
@@ -378,14 +323,9 @@
       "triangles": 70
     },
     {
-      "id": "b609c2b8e5da",
-      "file": "/data/guessr/b609c2b8e5da.json",
-      "triangles": 35
-    },
-    {
       "id": "b8ee37cd0b83",
       "file": "/data/guessr/b8ee37cd0b83.json",
-      "triangles": 46
+      "triangles": 62
     },
     {
       "id": "b9217258a115",
@@ -395,32 +335,27 @@
     {
       "id": "bab87ea98ae9",
       "file": "/data/guessr/bab87ea98ae9.json",
-      "triangles": 307
+      "triangles": 401
     },
     {
       "id": "bc521af8ade0",
       "file": "/data/guessr/bc521af8ade0.json",
-      "triangles": 27
+      "triangles": 99
     },
     {
       "id": "bcc4323d5dec",
       "file": "/data/guessr/bcc4323d5dec.json",
-      "triangles": 31
-    },
-    {
-      "id": "bd1a79272681",
-      "file": "/data/guessr/bd1a79272681.json",
-      "triangles": 26
+      "triangles": 235
     },
     {
       "id": "bf37813be090",
       "file": "/data/guessr/bf37813be090.json",
-      "triangles": 54
+      "triangles": 68
     },
     {
       "id": "c0850dbcc5a7",
       "file": "/data/guessr/c0850dbcc5a7.json",
-      "triangles": 28
+      "triangles": 66
     },
     {
       "id": "c274ddc6e6e8",
@@ -430,27 +365,27 @@
     {
       "id": "c3bf9d415222",
       "file": "/data/guessr/c3bf9d415222.json",
-      "triangles": 146
+      "triangles": 232
     },
     {
       "id": "c6249f175b47",
       "file": "/data/guessr/c6249f175b47.json",
-      "triangles": 56
+      "triangles": 89
     },
     {
       "id": "c77e1c49ba60",
       "file": "/data/guessr/c77e1c49ba60.json",
-      "triangles": 40
+      "triangles": 62
     },
     {
       "id": "c7e072f83574",
       "file": "/data/guessr/c7e072f83574.json",
-      "triangles": 142
+      "triangles": 188
     },
     {
       "id": "c8f2cebe968a",
       "file": "/data/guessr/c8f2cebe968a.json",
-      "triangles": 52
+      "triangles": 88
     },
     {
       "id": "cc3a16265e7c",
@@ -460,22 +395,22 @@
     {
       "id": "cd13c9056fbe",
       "file": "/data/guessr/cd13c9056fbe.json",
-      "triangles": 41
+      "triangles": 72
     },
     {
       "id": "d39191e75ade",
       "file": "/data/guessr/d39191e75ade.json",
-      "triangles": 53
+      "triangles": 64
     },
     {
       "id": "da0182c46886",
       "file": "/data/guessr/da0182c46886.json",
-      "triangles": 77
+      "triangles": 84
     },
     {
       "id": "da51ac3694a1",
       "file": "/data/guessr/da51ac3694a1.json",
-      "triangles": 30
+      "triangles": 63
     },
     {
       "id": "db58fec3f835",
@@ -483,59 +418,49 @@
       "triangles": 92
     },
     {
-      "id": "dc1ea79ec297",
-      "file": "/data/guessr/dc1ea79ec297.json",
-      "triangles": 30
-    },
-    {
       "id": "dc421c07c1f4",
       "file": "/data/guessr/dc421c07c1f4.json",
-      "triangles": 273
+      "triangles": 278
     },
     {
       "id": "de8ccade5448",
       "file": "/data/guessr/de8ccade5448.json",
-      "triangles": 105
+      "triangles": 138
     },
     {
       "id": "e4ed5e844be4",
       "file": "/data/guessr/e4ed5e844be4.json",
-      "triangles": 74
+      "triangles": 122
     },
     {
       "id": "f5b5a533baad",
       "file": "/data/guessr/f5b5a533baad.json",
-      "triangles": 46
+      "triangles": 128
     },
     {
       "id": "f65f747a1674",
       "file": "/data/guessr/f65f747a1674.json",
-      "triangles": 78
+      "triangles": 115
     },
     {
       "id": "f7a9844a8198",
       "file": "/data/guessr/f7a9844a8198.json",
-      "triangles": 98
-    },
-    {
-      "id": "fb74c94c1807",
-      "file": "/data/guessr/fb74c94c1807.json",
-      "triangles": 24
+      "triangles": 104
     },
     {
       "id": "fed39fbfb8e3",
       "file": "/data/guessr/fed39fbfb8e3.json",
-      "triangles": 46
+      "triangles": 67
     },
     {
       "id": "fee29f409a31",
       "file": "/data/guessr/fee29f409a31.json",
-      "triangles": 74
+      "triangles": 102
     },
     {
       "id": "ff1502061e60",
       "file": "/data/guessr/ff1502061e60.json",
-      "triangles": 80
+      "triangles": 140
     }
   ]
 }

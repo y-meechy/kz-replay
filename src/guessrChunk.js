@@ -303,7 +303,10 @@ export function pickChunk({
   route,
   tickRange,
   size,
-  minTriangles = 24,
+  // A chunk needs enough faces to read as a place, not a slab: taking the first
+  // candidate that cleared a 24-triangle bar produced boxes that looked almost
+  // empty in the game, so the bar is higher and the busiest candidate wins.
+  minTriangles = 60,
   // Roughly "about 3 brushes" worth of geometry: rejects chunks that are just a
   // lone floor slab, which technically has triangles but no readable shape.
   minNodes = 3,
@@ -311,11 +314,15 @@ export function pickChunk({
   const centres = routeCandidateCentres(route, tickRange, size);
   const routeWorld = routeWorldPoints(route, tickRange).flat();
 
+  let best = null;
   for (const centre of centres) {
     const result = extractChunk({ meshes, route: routeWorld, centre, size });
-    if (result.triangles >= minTriangles && result.nodeCount >= minNodes) {
-      return { ...result, centre };
+    if (result.triangles < minTriangles || result.nodeCount < minNodes) {
+      continue;
+    }
+    if (!best || result.triangles > best.triangles) {
+      best = { ...result, centre };
     }
   }
-  return null;
+  return best;
 }
