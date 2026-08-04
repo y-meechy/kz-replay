@@ -2001,6 +2001,11 @@ body {
 .guessr__stage {
   position: absolute;
   inset: 0;
+  /* Explicit size, not just inset: a canvas's width/height attributes act as
+     presentational hints that beat `auto`, so without this the HiDPI-scaled
+     canvas lays out at pixel-ratio times the viewport and gets cropped. */
+  width: 100%;
+  height: 100%;
   touch-action: none;
 }
 

@@ -1,5 +1,5 @@
-// Four pages, one document: browse the maps, scroll the world record feed, watch a
-// run, or read the docs.
+// Five pages, one document: browse the maps, scroll the world record feed, watch a
+// run, guess the map, or read the docs.
 //
 // The url is the whole state. That means every run is a link you can send someone,
 // the back button works, and a reload lands where you were, none of which is true

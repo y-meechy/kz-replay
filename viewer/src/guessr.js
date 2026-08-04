@@ -336,7 +336,10 @@ export const createGuessr = ({ root, maps, onExit }) => {
       scene?.setPaused(false);
       if (!manifest.rounds?.length) return;
 
-      const requested = seed != null ? Number(seed) : null;
+      // A garbage ?seed= would ripple through as NaN (and get written back into
+      // the URL); treat it like no seed at all.
+      const parsed = seed != null ? Number(seed) : NaN;
+      const requested = Number.isFinite(parsed) ? parsed >>> 0 : null;
       if (requested !== null && requested !== activeSeed) {
         startGame(requested);
       } else if (activeSeed === null) {
