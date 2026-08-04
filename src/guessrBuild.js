@@ -135,6 +135,27 @@ const chunkId = (mapName, courseName, board, candidateIndex = 0) =>
     .digest("hex")
     .slice(0, 12);
 
+/**
+ * The manifest lists every chunk file currently on disk, not just the ones just
+ * written — a rerun with a smaller --limit must not make rounds built earlier
+ * disappear from the manifest. It carries no answer data: someone skimming the
+ * network tab must not be able to read it off this file.
+ */
+const readManifestRounds = async () => {
+  const names = (await readdir(GUESSR_DIR)).sort();
+  const rounds = [];
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    const chunk = JSON.parse(await readFile(join(GUESSR_DIR, name), "utf8"));
+    rounds.push({
+      id: chunk.id,
+      file: `/data/guessr/${name}`,
+      triangles: chunk.triangles,
+    });
+  }
+  return rounds;
+};
+
 export const buildGuessrRounds = async ({
   limit = 40,
   size = DEFAULT_SIZE,
@@ -276,28 +297,12 @@ export const buildGuessrRounds = async ({
     }
   }
 
-  // The manifest lists every valid chunk file currently on disk for this round set,
-  // not just the ones just written — a rerun with a smaller --limit must not make
-  // rounds built earlier disappear from the manifest. It carries no answer data:
-  // someone skimming the network tab must not be able to read it off this file.
-  const manifestRounds = [];
-  for (const name of (await readdir(GUESSR_DIR)).sort()) {
-    if (!name.endsWith(".json")) continue;
-    const chunkData = JSON.parse(
-      await readFile(join(GUESSR_DIR, name), "utf8"),
-    );
-    manifestRounds.push({
-      id: chunkData.id,
-      file: `/data/guessr/${name}`,
-      triangles: chunkData.triangles,
-    });
-  }
   await writeJsonAtomically(
     GUESSR_JSON,
     {
       updatedAt: new Date().toISOString(),
       chunkSize: size,
-      rounds: manifestRounds,
+      rounds: await readManifestRounds(),
     },
     2,
   );
