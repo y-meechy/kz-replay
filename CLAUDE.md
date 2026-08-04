@@ -13,6 +13,7 @@ npm run format                       # prettier (run before committing)
 node bin/kzreplay.js verify --limit 60   # parse real replays; key parser integration check
 node bin/kzreplay.js wrs --limit 6   # download classic world records
 node bin/kzreplay.js map <name>      # convert a map (local tools, docs/maps.md)
+node bin/kzreplay.js guessr --limit 40   # build map-guessr rounds
 npm run build && npm start           # production build + server
 ```
 

@@ -44,6 +44,11 @@ Keys: `space` play/pause, `←` `→` skip five seconds (hold shift for a
 `/` is the map list, `/wr` is the world record feed, `/watch?ids=<id>` is one run —
 see [docs/api.md](docs/api.md) for how to link to a replay or compare two by id.
 
+`/guessr` is a five-round guessing game: a small, disconnected slab of real map
+geometry with a real run's route drawn through it, no sky, no textures, no map
+name — guess the map and course before the clock runs down your points. See
+[docs/guessr.md](docs/guessr.md) for how a chunk is picked and scored.
+
 ## Commands
 
 | Command                                              | What it does                                                                       |
@@ -79,6 +84,7 @@ _kz_grotto by ReDMooN — [Steam Workshop](https://steamcommunity.com/sharedfile
 - [docs/maps.md](docs/maps.md) — the map pipeline: geometry, textures, baked lighting, the real sky
 - [docs/comparison.md](docs/comparison.md) — how two runs are compared, in the viewer and on the CLI
 - [docs/viewer.md](docs/viewer.md) — browsing, the world record feed, view counts
+- [docs/guessr.md](docs/guessr.md) — the map-guessr minigame: chunk selection, coordinates, scoring
 - [docs/self-hosting.md](docs/self-hosting.md) — build and run a public instance
 - [docs/third-party-notices.md](docs/third-party-notices.md) — upstream code, game assets, maps and trademarks
 
