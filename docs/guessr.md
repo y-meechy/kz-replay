@@ -39,6 +39,9 @@ Three separate spaces get flattened into one before a chunk is built:
 1. **GLB local → world.** Each mesh primitive's `POSITION` accessor is
    multiplied by its node's world matrix (`toViewerSpace()` in
    `src/guessrChunk.js`, using `node.getWorldMatrix()` from `@gltf-transform/core`).
+   Positions are normalized int16 (`KHR_mesh_quantization`), so they are read
+   through `accessor.getElement()`, which divides by 32767 — the raw array is
+   32767× too big, and three.js does the same denormalization in the shader.
 2. **Exported metres → viewer units.** The result is scaled by
    `VRF_UNITS_PER_EXPORTED_METRE` (39.37, i.e. `× 100 / 2.54` — Source 2 Viewer
    exports in metres, the game and this project work in inches).
@@ -83,8 +86,11 @@ midline instead of inside it.
 A candidate qualifies once its chunk has at least 60 triangles and geometry
 from at least 3 separate mesh nodes ("about 3 brushes" — enough that the chunk
 reads as a piece of level, not one lone floor slab that happens to clear a
-triangle count); among the qualifying candidates, the one with the most
-triangles wins, so the box lands on the busiest spot the route passes. If none
+triangle count); among the qualifying candidates, the one closest to 1500
+triangles wins — chunks ship as committed JSON, so the densest spot would be a
+megabyte of prop clutter without being any more guessable. A winner over 4000
+triangles is trimmed to its 4000 largest faces, which drops small prop detail
+and keeps the structure. If none
 of the seven candidates qualify, the builder retries the whole selection with a
 1.5× and then 2× box (sparse open maps often have no dense spot at the default
 size, but a bigger box brings the surrounding structure into view). Only when

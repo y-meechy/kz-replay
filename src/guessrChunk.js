@@ -231,8 +231,10 @@ export function routeCandidateCentres(positions, tickRange, size) {
   });
 }
 
+// Whole units: the chunks ship as committed JSON, and at box sizes of 512+
+// units sub-unit vertex precision is invisible but costs ~25% of the file.
 function round2(n) {
-  return Math.round(n * 100) / 100;
+  return Math.round(n);
 }
 
 function bboxOverlapsBox(meshMin, meshMax, min, max) {
@@ -305,11 +307,17 @@ export function pickChunk({
   size,
   // A chunk needs enough faces to read as a place, not a slab: taking the first
   // candidate that cleared a 24-triangle bar produced boxes that looked almost
-  // empty in the game, so the bar is higher and the busiest candidate wins.
+  // empty in the game, so the bar is higher.
   minTriangles = 60,
   // Roughly "about 3 brushes" worth of geometry: rejects chunks that are just a
   // lone floor slab, which technically has triangles but no readable shape.
   minNodes = 3,
+  // Chunks ship as committed JSON, so the winner is the qualifying candidate
+  // closest to this count, not the densest one — a prop-heavy 100k-triangle spot
+  // is a megabyte of data without being any more guessable. Candidates above
+  // maxTriangles lose to any capped one and only win when nothing else passes.
+  targetTriangles = 1500,
+  maxTriangles = 4000,
 }) {
   const centres = routeCandidateCentres(route, tickRange, size);
   const routeWorld = routeWorldPoints(route, tickRange).flat();
@@ -320,9 +328,48 @@ export function pickChunk({
     if (result.triangles < minTriangles || result.nodeCount < minNodes) {
       continue;
     }
-    if (!best || result.triangles > best.triangles) {
-      best = { ...result, centre };
+    const over = result.triangles > maxTriangles;
+    const distance = Math.abs(result.triangles - targetTriangles);
+    if (
+      !best ||
+      (best.over && !over) ||
+      (best.over === over && distance < best.distance)
+    ) {
+      best = { ...result, centre, over, distance };
     }
   }
-  return best;
+  if (!best) return null;
+  const { over, distance, ...chunk } = best;
+  if (chunk.triangles > maxTriangles) {
+    // Some maps are dense at every candidate. Keeping the largest faces bounds
+    // the file while preserving the structure; what gets dropped is the small
+    // prop clutter, which is the least recognisable part anyway.
+    const byArea = [];
+    for (let i = 0; i < chunk.positions.length; i += 9) {
+      byArea.push({ offset: i, area: triangleArea(chunk.positions, i) });
+    }
+    byArea.sort((a, b) => b.area - a.area);
+    const kept = byArea.slice(0, maxTriangles);
+    kept.sort((a, b) => a.offset - b.offset);
+    const positions = [];
+    for (const { offset } of kept) {
+      for (let j = 0; j < 9; j++) positions.push(chunk.positions[offset + j]);
+    }
+    chunk.positions = positions;
+    chunk.triangles = maxTriangles;
+  }
+  return chunk;
+}
+
+function triangleArea(positions, offset) {
+  const ux = positions[offset + 3] - positions[offset];
+  const uy = positions[offset + 4] - positions[offset + 1];
+  const uz = positions[offset + 5] - positions[offset + 2];
+  const vx = positions[offset + 6] - positions[offset];
+  const vy = positions[offset + 7] - positions[offset + 1];
+  const vz = positions[offset + 8] - positions[offset + 2];
+  const nx = uy * vz - uz * vy;
+  const ny = uz * vx - ux * vz;
+  const nz = ux * vy - uy * vx;
+  return Math.sqrt(nx * nx + ny * ny + nz * nz);
 }

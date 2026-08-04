@@ -79,24 +79,22 @@ const loadMapMeshes = async (mapName) => {
       if (primitive.getMode() !== 4 /* TRIANGLES */) continue;
       const position = primitive.getAttribute("POSITION");
       if (!position) continue;
-      const positionArray = position.getArray();
       const indexAccessor = primitive.getIndices();
       const indices = indexAccessor
         ? indexAccessor.getArray()
-        : Uint32Array.from({ length: positionArray.length / 3 }, (_, i) => i);
+        : Uint32Array.from({ length: position.getCount() }, (_, i) => i);
       if (indices.length === 0) continue;
 
       const triangles = new Float32Array(indices.length * 3);
       const min = [Infinity, Infinity, Infinity];
       const max = [-Infinity, -Infinity, -Infinity];
       const out = [0, 0, 0];
+      const local = [0, 0, 0];
       for (let i = 0; i < indices.length; i++) {
-        const vertexIndex = indices[i];
-        const local = [
-          positionArray[vertexIndex * 3],
-          positionArray[vertexIndex * 3 + 1],
-          positionArray[vertexIndex * 3 + 2],
-        ];
+        // getElement, not getArray: positions are normalized int16
+        // (KHR_mesh_quantization), and the raw array is 32767x too big. Three.js
+        // denormalizes in the shader; getElement is the Node-side equivalent.
+        position.getElement(indices[i], local);
         toViewerSpace(out, local, worldMatrix);
         triangles[i * 3] = out[0];
         triangles[i * 3 + 1] = out[1];
