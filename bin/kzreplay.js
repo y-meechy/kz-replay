@@ -33,6 +33,7 @@ import { analyseRun } from "../src/analysis.js";
 import { compareRuns } from "../src/compare.js";
 import { renderComparison } from "../src/report.js";
 import { refresh } from "../src/refresh.js";
+import { buildGuessrRounds } from "../src/guessrBuild.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const TRACK_DIR = join(ROOT, "viewer", "public", "tracks");
@@ -421,6 +422,24 @@ const commands = {
     }
     if (failures.length > 0) {
       process.exitCode = 1;
+    }
+  },
+
+  async guessr({ flags }) {
+    const { written, skipped, failures } = await buildGuessrRounds({
+      limit: Number(flags.limit ?? 40),
+      size: Number(flags.size ?? 512),
+      force: Boolean(flags.force),
+      maps: flags.map ? flags.map.split(",") : null,
+      onProgress: (message) => console.log(`  ${message}`),
+    });
+
+    console.log(
+      `\n${written.length} chunk(s) written, ${skipped.length} skipped, ` +
+        `${failures.length} failed`,
+    );
+    for (const failure of failures) {
+      console.log(`  fail ${failure.map}/${failure.course}: ${failure.reason}`);
     }
   },
 };
