@@ -48,18 +48,40 @@ const DIST_DIR = process.env.KZ_DIST_DIR
   ? resolve(process.env.KZ_DIST_DIR)
   : join(REPO_ROOT, "viewer", "dist");
 
-const REPLAY_MAX_BYTES = integerFromEnv("KZ_REPLAY_MAX_BYTES", 8_000_000, {
+const REPLAY_MAX_BYTES = integerFromEnv("KZ_REPLAY_MAX_BYTES", 67_108_864, {
   min: 64_000,
-  max: 100_000_000,
+  max: 1_073_741_824,
 });
+const REPLAY_CACHE_DIR = process.env.KZ_REPLAY_CACHE_DIR
+  ? resolve(process.env.KZ_REPLAY_CACHE_DIR)
+  : join(STATE_DIR, "replays");
+const REPLAY_CACHE_MAX_BYTES = integerFromEnv(
+  "KZ_REPLAY_CACHE_MAX_BYTES",
+  4_294_967_296,
+  { min: REPLAY_MAX_BYTES, max: Number.MAX_SAFE_INTEGER },
+);
 const REPLAY_MAX_CONCURRENT = integerFromEnv("KZ_REPLAY_MAX_CONCURRENT", 8, {
   min: 1,
   max: 100,
 });
+const REPLAY_MAX_CONCURRENT_PER_IP = integerFromEnv(
+  "KZ_REPLAY_MAX_CONCURRENT_PER_IP",
+  2,
+  { min: 1, max: 100 },
+);
 const REPLAY_REQUESTS_PER_MINUTE = integerFromEnv(
   "KZ_REPLAY_REQUESTS_PER_MINUTE",
   60,
   { min: 1, max: 10_000 },
+);
+const REPLAY_BYTE_BURST = integerFromEnv("KZ_REPLAY_BYTE_BURST", 268_435_456, {
+  min: REPLAY_MAX_BYTES,
+  max: Number.MAX_SAFE_INTEGER,
+});
+const REPLAY_BYTES_PER_HOUR = integerFromEnv(
+  "KZ_REPLAY_BYTES_PER_HOUR",
+  1_073_741_824,
+  { min: 1, max: Number.MAX_SAFE_INTEGER },
 );
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -156,8 +178,13 @@ const sendJson = (response, status, body) => {
 // clients have body-size, concurrency and per-address limits.
 const proxyReplay = createReplayProxy({
   maxBytes: REPLAY_MAX_BYTES,
+  cacheDir: REPLAY_CACHE_DIR,
+  cacheMaxBytes: REPLAY_CACHE_MAX_BYTES,
   maxConcurrent: REPLAY_MAX_CONCURRENT,
+  maxConcurrentPerIp: REPLAY_MAX_CONCURRENT_PER_IP,
   requestsPerMinute: REPLAY_REQUESTS_PER_MINUTE,
+  byteBurst: REPLAY_BYTE_BURST,
+  bytesPerHour: REPLAY_BYTES_PER_HOUR,
   log: (message) => log(message),
 });
 
@@ -444,6 +471,7 @@ server.listen(PORT, () => {
   log(`  geometry ${MAPS_DIR}`);
   log(`  models   ${MODELS_DIR}`);
   log(`  state    ${STATE_DIR}`);
+  log(`  replays  ${REPLAY_CACHE_DIR}`);
   views.load();
   scheduleRefresh();
   // The feed first, because it is four requests and the page it feeds is the one
