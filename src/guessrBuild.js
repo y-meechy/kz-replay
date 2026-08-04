@@ -33,6 +33,10 @@ const GUESSR_JSON = join(DATA_DIR, "guessr.json");
 // to still show a recognisable piece of level.
 const DEFAULT_SIZE = 512;
 
+// Sparse open maps often have no dense spot at the default size; growing the box
+// brings in the surrounding structure instead of dropping the round.
+const SIZE_SCALES = [1, 1.5, 2];
+
 // Preference order when a map/course has more than one leaderboard: classic is
 // the mode most runs and viewers know, and pro (no teleports) is the fuller run.
 const BOARD_ORDER = ["classic-pro", "classic-tp", "vanilla-pro", "vanilla-tp"];
@@ -243,11 +247,9 @@ export const buildGuessrRounds = async ({
         leadOut: track.leadOut,
         count: track.count,
       };
-      // Sparse open maps often have no dense spot at the default size; a bigger
-      // box brings in the surrounding structure instead of dropping the round.
       let chunk = null;
       let chunkSize = size;
-      for (const scale of [1, 1.5, 2]) {
+      for (const scale of SIZE_SCALES) {
         chunkSize = size * scale;
         chunk = pickChunk({
           meshes,
