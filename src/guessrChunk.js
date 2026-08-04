@@ -233,7 +233,7 @@ export function routeCandidateCentres(positions, tickRange, size) {
 
 // Whole units: the chunks ship as committed JSON, and at box sizes of 512+
 // units sub-unit vertex precision is invisible but costs ~25% of the file.
-function round2(n) {
+function roundUnit(n) {
   return Math.round(n);
 }
 
@@ -249,9 +249,9 @@ export function extractChunk({ meshes, route, centre, size }) {
   // Chunk geometry ships centred on the origin, rounded to keep manifests small.
   const pushLocal = (into, v) => {
     into.push(
-      round2(v[0] - centre[0]),
-      round2(v[1] - centre[1]),
-      round2(v[2] - centre[2]),
+      roundUnit(v[0] - centre[0]),
+      roundUnit(v[1] - centre[1]),
+      roundUnit(v[2] - centre[2]),
     );
   };
   const positions = [];
@@ -340,28 +340,36 @@ export function pickChunk({
   }
   if (!best) return null;
   const { over, distance, ...chunk } = best;
-  if (chunk.triangles > maxTriangles) {
-    // Some maps are dense at every candidate. Keeping the largest faces bounds
-    // the file while preserving the structure; what gets dropped is the small
-    // prop clutter, which is the least recognisable part anyway.
-    const byArea = [];
-    for (let i = 0; i < chunk.positions.length; i += 9) {
-      byArea.push({ offset: i, area: triangleArea(chunk.positions, i) });
-    }
-    byArea.sort((a, b) => b.area - a.area);
-    const kept = byArea.slice(0, maxTriangles);
-    kept.sort((a, b) => a.offset - b.offset);
-    const positions = [];
-    for (const { offset } of kept) {
-      for (let j = 0; j < 9; j++) positions.push(chunk.positions[offset + j]);
-    }
-    chunk.positions = positions;
+  if (over) {
+    chunk.positions = keepLargestFaces(chunk.positions, maxTriangles);
     chunk.triangles = maxTriangles;
   }
   return chunk;
 }
 
-function triangleArea(positions, offset) {
+// Some maps are dense at every candidate. Keeping the largest faces bounds the
+// file while preserving the structure; what gets dropped is the small prop
+// clutter, which is the least recognisable part anyway. Kept faces stay in their
+// original order so the trimmed geometry draws the same as the untrimmed one.
+function keepLargestFaces(positions, maxTriangles) {
+  const faces = [];
+  for (let offset = 0; offset < positions.length; offset += 9) {
+    faces.push({ offset, size: faceSize(positions, offset) });
+  }
+  faces.sort((a, b) => b.size - a.size);
+  const kept = faces.slice(0, maxTriangles);
+  kept.sort((a, b) => a.offset - b.offset);
+
+  const trimmed = [];
+  for (const { offset } of kept) {
+    for (let i = 0; i < 9; i++) trimmed.push(positions[offset + i]);
+  }
+  return trimmed;
+}
+
+// Cross-product length of one face in a flat position array: twice its area, but
+// only ever compared against other faces, so the factor of two does not matter.
+function faceSize(positions, offset) {
   const ux = positions[offset + 3] - positions[offset];
   const uy = positions[offset + 4] - positions[offset + 1];
   const uz = positions[offset + 5] - positions[offset + 2];
