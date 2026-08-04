@@ -27,7 +27,7 @@ const fetchJson = async (url, fallback) => {
   }
 };
 
-export const createBrowse = ({ root, onWatch, onFeed }) => {
+export const createBrowse = ({ root, onWatch, onFeed, onGuessr }) => {
   let maps = [];
   let entries = {};
   let geometry = {};
@@ -353,6 +353,9 @@ export const createBrowse = ({ root, onWatch, onFeed }) => {
         <button id="browse-feed" class="button button--primary button--feed" type="button">
           ▶ Latest world records
         </button>
+        <button id="browse-guessr" class="button" type="button">
+          🗺️ Guess the map
+        </button>
         <input id="browse-filter" class="input" type="search" placeholder="filter by map name" spellcheck="false" />
         <label class="checkbox"><input type="checkbox" id="browse-glb" /><span>only maps with 3D geometry</span></label>
       </div>
@@ -430,6 +433,7 @@ export const createBrowse = ({ root, onWatch, onFeed }) => {
     views: root.querySelector("#sheet-views"),
     watch: root.querySelector("#sheet-watch"),
     feed: root.querySelector("#browse-feed"),
+    guessr: root.querySelector("#browse-guessr"),
     compareInput: root.querySelector("#sheet-compare-id"),
     compareButton: root.querySelector("#sheet-compare"),
     compareError: root.querySelector("#sheet-compare-error"),
@@ -446,6 +450,7 @@ export const createBrowse = ({ root, onWatch, onFeed }) => {
     renderGrid();
   });
   dom.feed.addEventListener("click", () => onFeed?.());
+  dom.guessr.addEventListener("click", () => onGuessr?.());
   dom.replayButton.addEventListener("click", resolveReplay);
   dom.replayInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") resolveReplay();

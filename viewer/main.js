@@ -8,6 +8,7 @@
 //   /                                          the map list
 //   /wr[?id=<id>]                              the world record feed
 //   /watch?ids=<id>[,<id>]&view=pov|follow|free
+//   /guessr[?seed=<n>]                         the map-guessing minigame
 //   /docs                                      how to build those links
 //
 // Query parameters rather than path segments because the links are built by other
@@ -23,6 +24,7 @@ import { buildInsights } from "./src/insights.js";
 import { createAnalysisPanel } from "./src/analysisPanel.js";
 import { createBrowse } from "./src/browse.js";
 import { createWrFeed } from "./src/wrFeed.js";
+import { createGuessr } from "./src/guessr.js";
 import { createMhud } from "./src/mhud.js";
 import { findMapFile } from "./src/mapFile.js";
 import { formatDelta, formatRunTime } from "./src/format.js";
@@ -111,6 +113,9 @@ const readRoute = () => {
     // The feed's own id parameter: which record it is scrolled to.
     return { page: "wr", ids: [], dropped: 0, feedId: params.get("id") };
   }
+  if (path === "/guessr") {
+    return { page: "guessr", ids: [], dropped: 0, seed: params.get("seed") };
+  }
   if (path !== "/watch") return { page: "browse", ids: [], dropped: 0 };
 
   const requested = params.get("view");
@@ -134,6 +139,7 @@ const navigate = (url, { replace = false } = {}) => {
 // hunting through the document sixty times a second.
 const browseRoot = el("browse");
 const feedRoot = el("wr");
+const guessrRoot = el("guessr");
 const watchRoot = el("watch");
 const docsRoot = el("docs");
 const stage = el("stage");
@@ -1062,6 +1068,7 @@ const browse = createBrowse({
       ),
     ),
   onFeed: () => navigate("/wr"),
+  onGuessr: () => navigate("/guessr"),
 });
 
 const feed = createWrFeed({
@@ -1073,6 +1080,27 @@ const feed = createWrFeed({
   onBack: () => navigate("/"),
 });
 
+// Created on first visit to /guessr, not at startup: it opens its own WebGL
+// context the moment it exists, and most visitors never open the game. A
+// second context would be one nobody asked for, sitting on the GPU for the
+// rest of the session.
+let guessr = null;
+
+const enterGuessr = async (seed) => {
+  if (!guessr) {
+    const catalog = await fetch("/data/maps.json")
+      .then((response) => (response.ok ? response.json() : { maps: [] }))
+      .catch(() => ({ maps: [] }));
+    guessr = createGuessr({
+      root: guessrRoot,
+      maps: catalog.maps ?? [],
+      onExit: () => navigate("/"),
+    });
+    await guessr.load();
+  }
+  guessr.show(seed);
+};
+
 const route = () => {
   // An old hash link is turned into the current shape and re-routed, so nothing
   // below has to know the old format existed.
@@ -1082,17 +1110,28 @@ const route = () => {
     return;
   }
 
-  const { page, ids, view, notice, dropped, feedId } = readRoute();
+  const { page, ids, view, notice, dropped, feedId, seed } = readRoute();
 
   if (page === "wr") {
     docsRoot.hidden = true;
     watchRoot.hidden = true;
+    guessr?.hide();
     leaveWatch();
     browse.hide();
     feed.show(feedId);
     return;
   }
   feed.hide();
+
+  if (page === "guessr") {
+    docsRoot.hidden = true;
+    watchRoot.hidden = true;
+    leaveWatch();
+    browse.hide();
+    enterGuessr(seed);
+    return;
+  }
+  guessr?.hide();
 
   if (page === "watch") {
     docsRoot.hidden = true;
