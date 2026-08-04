@@ -31,16 +31,31 @@ automatically read `.env`; export values before starting it, use Node's
 
 Operational limits have conservative defaults and reject invalid values at startup:
 
-| Variable                        | Default   | Purpose                                    |
-| ------------------------------- | --------- | ------------------------------------------ |
-| `KZ_TOOL_TIMEOUT_MINUTES`       | `30`      | Timeout per external tool process (1–1440) |
-| `KZ_REPLAY_MAX_BYTES`           | `8000000` | Largest replay body accepted by the proxy  |
-| `KZ_REPLAY_MAX_CONCURRENT`      | `8`       | Simultaneous upstream replay requests      |
-| `KZ_REPLAY_REQUESTS_PER_MINUTE` | `60`      | Per-client replay requests in a minute     |
+| Variable                          | Default      | Purpose                                     |
+| --------------------------------- | ------------ | ------------------------------------------- |
+| `KZ_TOOL_TIMEOUT_MINUTES`         | `30`         | Timeout per external tool process (1–1440)  |
+| `KZ_REPLAY_MAX_BYTES`             | `67108864`   | Largest replay body accepted by the proxy   |
+| `KZ_REPLAY_CACHE_DIR`             | state cache  | Directory containing immutable UUID files   |
+| `KZ_REPLAY_CACHE_MAX_BYTES`       | `4294967296` | Maximum cache size before lazy eviction     |
+| `KZ_REPLAY_MAX_CONCURRENT`        | `8`          | Simultaneous replay requests overall        |
+| `KZ_REPLAY_MAX_CONCURRENT_PER_IP` | `2`          | Simultaneous replay requests per client     |
+| `KZ_REPLAY_REQUESTS_PER_MINUTE`   | `60`         | Per-client replay requests in a minute      |
+| `KZ_REPLAY_BYTE_BURST`            | `268435456`  | Per-client GET byte-bucket capacity         |
+| `KZ_REPLAY_BYTES_PER_HOUR`        | `1073741824` | Per-client GET byte-bucket refill each hour |
 
 Keep `KZ_STATE_DIR` persistent because it contains view counts. Keep the generated
 data, maps, models, tools, and CS2 cache persistent when you do not want refreshes or
 conversions repeated after each deployment.
+
+The replay cache defaults to `replays` inside `KZ_STATE_DIR`. A miss is downloaded to
+a temporary file and renamed only after its size has been verified, so UUID-named
+files are complete and immutable. Abandoned proxy temporary files are removed during
+the next lazy cache scan after a restart. After a successful write, the server lazily
+removes the oldest entries until the configured cache maximum is met; files currently
+being served are protected from eviction. Cache growth can briefly exceed the limit
+while all eviction candidates are active. To reclaim it manually, stop the server and
+delete UUID-named files from `KZ_REPLAY_CACHE_DIR`; they are disposable and fetched
+again on demand. Do not delete the directory while the server is running.
 
 ## Run the container
 
@@ -68,8 +83,7 @@ For a catalog-only deployment, add `--env KZ_CONVERT_MAPS=false`. The server exp
 
 Put a TLS-terminating reverse proxy or managed ingress in front of port 8080. Tune
 the built-in replay limits above and apply request and bandwidth limits appropriate
-to your host. Consider caching successful replay responses: a replay for a record id
-is immutable. The application limits clients by the socket address and accepts
+to your host. The application limits clients by the socket address and accepts
 the first `X-Forwarded-For` address only when the direct peer is loopback or on a
 private network. Make sure only a trusted reverse proxy can reach the application
 on such a network, and set or replace that header at the proxy.
