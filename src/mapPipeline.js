@@ -421,13 +421,17 @@ export const convertMap = async ({
     );
     const exportDir = containedPath(workDir, "export", mapName);
     // CLI 20.0 writes a single -f match to the exact -o path plus extension, so the
-    // world lands beside exportDir as `<mapName>.glb` rather than inside it.
+    // world lands beside exportDir as `<mapName>.glb` rather than inside it, with the
+    // collision mesh as `<mapName>_physics.glb`. Clear both layouts so a stale file
+    // can never be mistaken for this run's output.
     const flatGlb = containedPath(workDir, "export", `${mapName}.glb`);
-    await rm(exportDir, { recursive: true, force: true });
-    await rm(flatGlb, { force: true });
-    await rm(containedPath(workDir, "export", `${mapName}_physics.glb`), {
-      force: true,
-    });
+    await Promise.all([
+      rm(exportDir, { recursive: true, force: true }),
+      rm(flatGlb, { force: true }),
+      rm(containedPath(workDir, "export", `${mapName}_physics.glb`), {
+        force: true,
+      }),
+    ]);
     await run(
       cli,
       [
@@ -447,6 +451,7 @@ export const convertMap = async ({
       BIG_OUTPUT,
     );
 
+    // Older CLIs nest the world under the -o directory; 20.0 writes it flat.
     const nested = containedPath(exportDir, "maps", mapName, "world.glb");
     const raw = existsSync(nested) ? nested : flatGlb;
     if (!existsSync(raw)) {
