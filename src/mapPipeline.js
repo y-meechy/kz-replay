@@ -420,7 +420,14 @@ export const convertMap = async ({
         : "exporting world geometry to glTF…",
     );
     const exportDir = containedPath(workDir, "export", mapName);
+    // CLI 20.0 writes a single -f match to the exact -o path plus extension, so the
+    // world lands beside exportDir as `<mapName>.glb` rather than inside it.
+    const flatGlb = containedPath(workDir, "export", `${mapName}.glb`);
     await rm(exportDir, { recursive: true, force: true });
+    await rm(flatGlb, { force: true });
+    await rm(containedPath(workDir, "export", `${mapName}_physics.glb`), {
+      force: true,
+    });
     await run(
       cli,
       [
@@ -440,10 +447,14 @@ export const convertMap = async ({
       BIG_OUTPUT,
     );
 
-    const raw = containedPath(exportDir, "maps", mapName, "world.glb");
+    const nested = containedPath(exportDir, "maps", mapName, "world.glb");
+    const raw = existsSync(nested) ? nested : flatGlb;
     if (!existsSync(raw)) {
       throw new Error(`the exporter produced no world.glb for ${mapName}`);
     }
+    // The flat layout skips creating exportDir, but the trim and optimize steps
+    // still write their intermediates inside it.
+    await mkdir(exportDir, { recursive: true });
 
     // 3d. The map's real sky, written beside the .glb rather than into it: glTF has no
     // slot for a scene background, and the viewer wants it as an equirectangular image
