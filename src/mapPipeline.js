@@ -30,7 +30,7 @@ import sharp from "sharp";
 import { trimMap } from "./trimMap.js";
 import { buildLightmap } from "./mapLightmap.js";
 import { readMaterialNames } from "./mapMaterialNames.js";
-import { buildSky, readSkyName } from "./mapSky.js";
+import { buildSky, readLights, readSkyName } from "./mapSky.js";
 import { borrowCs2Materials } from "./cs2Materials.js";
 import {
   cs2GameInfoPath,
@@ -465,7 +465,15 @@ export const convertMap = async ({
     // still write their intermediates inside it.
     await mkdir(exportDir, { recursive: true });
 
-    // 3d. The map's real sky, written beside the .glb rather than into it: glTF has no
+    // 3d. The map's lamp entities, also written beside the .glb: the baked atlas only
+    // carries their bounce, so the viewer re-adds their direct light as point lights.
+    let lights = [];
+    if (withSky) {
+      lights = await readLights({ cli, mapVpk: innerVpk, mapName, workDir });
+      if (lights.length) log(`the map carries ${lights.length} lamp light(s)`);
+    }
+
+    // 3e. The map's real sky, written beside the .glb rather than into it: glTF has no
     // slot for a scene background, and the viewer wants it as an equirectangular image
     // either way. Costs a few kilobytes, and one CS2 archive part the first time a
     // given sky is seen.
@@ -704,6 +712,13 @@ export const convertMap = async ({
       await writeFile(sunPath, JSON.stringify(sky.sun));
     } else if (withSky) {
       await rm(sunPath, { force: true });
+    }
+
+    const lightsPath = containedPath(outputDir, `${mapName}.lights.json`);
+    if (lights.length) {
+      await writeFile(lightsPath, JSON.stringify(lights));
+    } else if (withSky) {
+      await rm(lightsPath, { force: true });
     }
 
     if (cleanup) {

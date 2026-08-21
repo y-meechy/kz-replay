@@ -53,6 +53,20 @@ export const readSkyName = async ({
   workDir,
   log = () => {},
 }) => {
+  const texts = await readEntityLumps({ cli, mapVpk, mapName, workDir });
+  if (!texts.length) {
+    log("this map has no entity lump, so the sky stays the default gradient");
+    return null;
+  }
+  for (const text of texts) {
+    const match = /skyname\s+"([^"]+\.vmat)"/i.exec(text);
+    if (match) return match[1];
+  }
+  return null;
+};
+
+/** The decompiled entity lump(s), as plain text. Empty when the map has none. */
+const readEntityLumps = async ({ cli, mapVpk, mapName, workDir }) => {
   const dumpDir = join(workDir, "entities", mapName);
   await rm(dumpDir, { recursive: true, force: true });
   try {
@@ -69,19 +83,59 @@ export const readSkyName = async ({
     try {
       files = await readdir(entityDir);
     } catch {
-      log("this map has no entity lump, so the sky stays the default gradient");
-      return null;
+      return [];
     }
+    const texts = [];
     for (const file of files) {
       if (!file.endsWith(".vents")) continue;
-      const text = await readFile(join(entityDir, file), "latin1");
-      const match = /skyname\s+"([^"]+\.vmat)"/i.exec(text);
-      if (match) return match[1];
+      texts.push(await readFile(join(entityDir, file), "latin1"));
     }
-    return null;
+    return texts;
   } finally {
     await rm(dumpDir, { recursive: true, force: true }).catch(() => {});
   }
+};
+
+/**
+ * The map's own lamp entities, for the viewer to relight.
+ *
+ * The baked atlas carries only what the compiler put in it — for these lights that
+ * is their bounce, not their direct throw — so a room lit by lamps comes out flat
+ * without them. Only `light_omni2` for now: it is what CS2 maps overwhelmingly use.
+ *
+ * @returns [{ origin: [x,y,z], color: [r,g,b] 0-255, lumens, range }]
+ */
+export const readLights = async ({ cli, mapVpk, mapName, workDir }) => {
+  const texts = await readEntityLumps({ cli, mapVpk, mapName, workDir });
+  const lights = [];
+  for (const text of texts) {
+    // Blocks are key/value lines; a classname line opens a new entity.
+    for (const block of text.split(/classname\s+/)) {
+      if (!block.startsWith('"light_omni2"')) continue;
+      if (field(block, "enabled") === "false") continue;
+      const origin = field(block, "origin")?.split(/\s+/).map(Number);
+      const lumens = Number(field(block, "brightness_lumens"));
+      if (origin?.length !== 3 || !(lumens > 0)) continue;
+      // Colours are the one bracketed value in here: color [255, 200, 160].
+      const color = /\bcolor\s+\[([^\]]+)\]/
+        .exec(block)?.[1]
+        .split(",")
+        .map(Number);
+      lights.push({
+        origin,
+        color: color ?? [255, 255, 255],
+        lumens,
+        range: Number(field(block, "range")),
+      });
+    }
+  }
+  return lights;
+};
+
+/** One plain key/value out of an entity block, or null when it has no such key. */
+const field = (block, key) => {
+  const match = new RegExp(`\\b${key}\\s+"?([^"\\n]+)"?`).exec(block);
+  return match ? match[1].trim() : null;
 };
 
 /** Exposure that puts the sky's bright end on SKY_TARGET. Same idea as the lightmap. */

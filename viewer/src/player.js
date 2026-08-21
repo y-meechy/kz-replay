@@ -76,6 +76,24 @@ const BAKED_LIGHT_GAIN = 3;
 const SCENE_LIGHT_SHARE = 0.4;
 
 /**
+ * How many of a map's lamp entities get to be real point lights, brightest first.
+ *
+ * Every point light costs per-pixel work in a forward renderer, and the dim tail is
+ * already carried well enough by the baked atlas.
+ */
+const MAX_MAP_LIGHTS = 40;
+
+/**
+ * Lamp brightness, from the mapper's lumens to three.js intensity.
+ *
+ * Lumens spread over the sphere give candela, and three.js expects its physically
+ * correct falloff in metres while this project's world units are Source's inches —
+ * so the candela figure is rescaled by (units per metre)².
+ */
+const CANDELA_PER_LUMEN = 1 / (4 * Math.PI);
+const UNITS_PER_METRE = 39.37;
+
+/**
  * The name of an imported material that carries baked lighting, not a surface colour.
  *
  * src/trimMap.js names them: one per palette colour, `kz_<lowercase hex>_lit`. A map
@@ -868,6 +886,45 @@ export const createPlayer = ({
   };
 
   /**
+   * Re-add the map's lamp entities as real point lights.
+   *
+   * `<map>.lights.json` carries them, written by src/mapSky.js. The baked atlas only
+   * carries these lights' bounce — the compiler leaves their direct throw to the
+   * engine — so rooms lit by lamps come out flat without them.
+   *
+   * Silent on failure like the sky: most conversions have no lights file.
+   */
+  const loadLights = async (mapUrl, isCurrent) => {
+    const url = mapUrl.replace(/\.glb(\?.*)?$/, ".lights.json");
+    if (url === mapUrl) return;
+    try {
+      const response = await fetch(url);
+      if (!response.ok) return;
+      const type = response.headers.get("content-type") ?? "";
+      if (type.includes("text/html")) return; // dev server 404s answer with index.html
+      const lights = await response.json();
+      if (!isCurrent() || !Array.isArray(lights)) return;
+      const brightest = lights
+        .filter((light) => Array.isArray(light.origin))
+        .sort((a, b) => b.lumens - a.lumens)
+        .slice(0, MAX_MAP_LIGHTS);
+      for (const { origin, color, lumens, range } of brightest) {
+        const rgb = (color ?? [255, 255, 255]).map((v) => v / 255);
+        const point = new THREE.PointLight(
+          new THREE.Color(...rgb),
+          lumens * CANDELA_PER_LUMEN * UNITS_PER_METRE * UNITS_PER_METRE,
+          range || 0,
+          2, // inverse-square decay, the physical one
+        );
+        point.position.set(...toWorld(...origin));
+        mapGroup.add(point);
+      }
+    } catch {
+      // No lights file is the normal case.
+    }
+  };
+
+  /**
    * Aim the scene's sun with the map's real one, when the conversion wrote it.
    *
    * `<map>.sun.json` carries SolarPosition and SolarIrradiance from the sky material —
@@ -1080,6 +1137,7 @@ export const createPlayer = ({
               // until this map has survived every awaited stage above.
               loadSky(url, isCurrent);
               loadSun(url, isCurrent);
+              loadLights(url, isCurrent);
               mapGroup.visible = true;
               grid.visible = false;
               // With walls to hide behind, near geometry should not fade out.
