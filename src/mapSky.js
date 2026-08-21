@@ -22,7 +22,7 @@ import { join } from "node:path";
 import sharp from "sharp";
 import { EXRLoader } from "three/addons/loaders/EXRLoader.js";
 import { cs2IndexPath } from "./cs2Content.js";
-import { HALF_TO_FLOAT, encodeSrgb } from "./tonemap.js";
+import { HALF_TO_FLOAT, encodeSrgb, exposureFor } from "./tonemap.js";
 import { runTool as run } from "./toolProcess.js";
 
 const BIG_OUTPUT = { maxBuffer: 64 * 1024 * 1024 };
@@ -53,6 +53,20 @@ export const readSkyName = async ({
   workDir,
   log = () => {},
 }) => {
+  const texts = await readEntityLumps({ cli, mapVpk, mapName, workDir });
+  if (!texts.length) {
+    log("this map has no entity lump, so the sky stays the default gradient");
+    return null;
+  }
+  for (const text of texts) {
+    const match = /skyname\s+"([^"]+\.vmat)"/i.exec(text);
+    if (match) return match[1];
+  }
+  return null;
+};
+
+/** The decompiled entity lump(s), as plain text. Empty when the map has none. */
+const readEntityLumps = async ({ cli, mapVpk, mapName, workDir }) => {
   const dumpDir = join(workDir, "entities", mapName);
   await rm(dumpDir, { recursive: true, force: true });
   try {
@@ -69,38 +83,59 @@ export const readSkyName = async ({
     try {
       files = await readdir(entityDir);
     } catch {
-      log("this map has no entity lump, so the sky stays the default gradient");
-      return null;
+      return [];
     }
+    const texts = [];
     for (const file of files) {
       if (!file.endsWith(".vents")) continue;
-      const text = await readFile(join(entityDir, file), "latin1");
-      const match = /skyname\s+"([^"]+\.vmat)"/i.exec(text);
-      if (match) return match[1];
+      texts.push(await readFile(join(entityDir, file), "latin1"));
     }
-    return null;
+    return texts;
   } finally {
     await rm(dumpDir, { recursive: true, force: true }).catch(() => {});
   }
 };
 
-/** Exposure that puts the sky's bright end on SKY_TARGET. Same idea as the lightmap. */
-const exposureFor = (sample, count) => {
-  const BINS = 4096;
-  const SCALE = BINS / 64;
-  const histogram = new Uint32Array(BINS + 1);
-  for (let index = 0; index < count; index += 1) {
-    histogram[Math.min(BINS, Math.max(0, (sample(index) * SCALE) | 0))] += 1;
+/**
+ * The map's own lamp entities, for the viewer to relight.
+ *
+ * The baked atlas carries only what the compiler put in it — for these lights that
+ * is their bounce, not their direct throw — so a room lit by lamps comes out flat
+ * without them. Only `light_omni2` for now: it is what CS2 maps overwhelmingly use.
+ *
+ * @returns [{ origin: [x,y,z], color: [r,g,b] 0-255, lumens, range }]
+ */
+export const readLights = async ({ cli, mapVpk, mapName, workDir }) => {
+  const texts = await readEntityLumps({ cli, mapVpk, mapName, workDir });
+  const lights = [];
+  for (const text of texts) {
+    // Blocks are key/value lines; a classname line opens a new entity.
+    for (const block of text.split(/classname\s+/)) {
+      if (!block.startsWith('"light_omni2"')) continue;
+      if (field(block, "enabled") === "false") continue;
+      const origin = field(block, "origin")?.split(/\s+/).map(Number);
+      const lumens = Number(field(block, "brightness_lumens"));
+      if (origin?.length !== 3 || !(lumens > 0)) continue;
+      // Colours are the one bracketed value in here: color [255, 200, 160].
+      const color = /\bcolor\s+\[([^\]]+)\]/
+        .exec(block)?.[1]
+        .split(",")
+        .map(Number);
+      lights.push({
+        origin,
+        color: color ?? [255, 255, 255],
+        lumens,
+        range: Number(field(block, "range")),
+      });
+    }
   }
-  const target = count * SKY_PERCENTILE;
-  let running = 0;
-  let bin = 0;
-  for (; bin < histogram.length; bin += 1) {
-    running += histogram[bin];
-    if (running >= target) break;
-  }
-  const bright = Math.max((bin + 0.5) / SCALE, 0.05);
-  return -Math.log(1 - SKY_TARGET) / bright;
+  return lights;
+};
+
+/** One plain key/value out of an entity block, or null when it has no such key. */
+const field = (block, key) => {
+  const match = new RegExp(`\\b${key}\\s+"?([^"\\n]+)"?`).exec(block);
+  return match ? match[1].trim() : null;
 };
 
 /**
@@ -118,6 +153,9 @@ export const buildSky = async ({
   skyName,
   workDir,
   size = 1024,
+  // Where to read the sky from: the CS2 content cache by default, or the unpacked
+  // workshop tree for the custom skies mappers ship inside the item itself.
+  input = null,
   log = () => {},
 }) => {
   const dumpDir = join(workDir, "sky");
@@ -129,14 +167,25 @@ export const buildSky = async ({
     const base = skyName.replace(/\.vmat$/i, "");
     await run(
       cli,
-      ["-i", cs2IndexPath(cs2Dir), "-f", base, "-d", "-o", dumpDir],
+      [
+        "-i",
+        input ?? cs2IndexPath(cs2Dir),
+        // Folder input (the unpacked workshop tree) needs the recursive scan; the
+        // filter still applies, the CLI just refuses a bare folder without it.
+        ...(input ? ["--recursive"] : []),
+        "-f",
+        base,
+        "-d",
+        "-o",
+        dumpDir,
+      ],
       BIG_OUTPUT,
     ).catch(() => {});
 
     const exrPath = join(dumpDir, `${base}.exr`);
     const materialPath = join(dumpDir, `${base}.vmat`);
     if (!existsSync(exrPath)) {
-      log(`the sky ${skyName} is not in the CS2 cache, keeping the gradient`);
+      log(`the sky ${skyName} is not there, keeping the gradient`);
       return null;
     }
 
@@ -171,6 +220,8 @@ export const buildSky = async ({
         0.7152 * at(index * 4 + 1) +
         0.0722 * at(index * 4 + 2),
       pixels,
+      SKY_PERCENTILE,
+      SKY_TARGET,
     );
 
     const out = Buffer.allocUnsafe(pixels * 3);

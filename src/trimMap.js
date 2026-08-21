@@ -192,6 +192,9 @@ export const trimMap = async ({
   // about attribute bloat still applies, so the set kept is still the smallest one
   // that can be drawn — it is just three streams now instead of one.
   withTextures = false,
+  // The 1:1 build: drop nothing, so tangents and vertex colours survive and normal
+  // and roughness maps still have what they need to draw.
+  keepAllAttributes = false,
   // Mesh name -> material path, from readMaterialNames(). Given one, every surface
   // gets a flat colour picked from that name. Costs about thirty material
   // definitions and not one byte of texture.
@@ -202,10 +205,12 @@ export const trimMap = async ({
   // materialNames, because the flat colour is what the light is multiplied into.
   lightmap = null,
 }) => {
-  const keepAttributes = keepAttributesFor({
-    withTextures,
-    withLightmap: Boolean(lightmap),
-  });
+  const keepAttributes = keepAllAttributes
+    ? { has: () => true }
+    : keepAttributesFor({
+        withTextures,
+        withLightmap: Boolean(lightmap),
+      });
   const texturesFilledIn = withTextures
     ? await fillInMissingTextures(input)
     : [];

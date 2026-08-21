@@ -76,6 +76,24 @@ const BAKED_LIGHT_GAIN = 3;
 const SCENE_LIGHT_SHARE = 0.4;
 
 /**
+ * How many of a map's lamp entities get to be real point lights, brightest first.
+ *
+ * Every point light costs per-pixel work in a forward renderer, and the dim tail is
+ * already carried well enough by the baked atlas.
+ */
+const MAX_MAP_LIGHTS = 40;
+
+/**
+ * Lamp brightness, from the mapper's lumens to three.js intensity.
+ *
+ * Lumens spread over the sphere give candela, and three.js expects its physically
+ * correct falloff in metres while this project's world units are Source's inches —
+ * so the candela figure is rescaled by (units per metre)².
+ */
+const CANDELA_PER_LUMEN = 1 / (4 * Math.PI);
+const UNITS_PER_METRE = 39.37;
+
+/**
  * The name of an imported material that carries baked lighting, not a surface colour.
  *
  * src/trimMap.js names them: one per palette colour, `kz_<lowercase hex>_lit`. A map
@@ -279,7 +297,10 @@ export const createPlayer = ({
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   // Without tone mapping, several lights add up past 1.0 and every surface clips
   // to flat white, which looks like a paper cut-out instead of a room.
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  // Neutral (the Khronos PBR curve) over ACES: ACES pushes everything cooler and
+  // desaturates reds, which is a large part of why converted maps read colder
+  // than the same map in CS2. Neutral keeps the mapper's albedo colours.
+  renderer.toneMapping = THREE.NeutralToneMapping;
   // Measured with sampleBrightness() on kz_victoria in the follow view. 0.85 was set
   // back when the baked lighting never reached a textured map at all, so a surface was
   // lit only by the invented lights and the whole level read flat and much darker than
@@ -769,8 +790,18 @@ export const createPlayer = ({
         : material;
       if (canBeLit) lightMapCandidates.add(adopted);
       adopted.side = THREE.FrontSide;
-      adopted.roughness = 1;
-      adopted.metalness = 0;
+      // The --full build ships the exporter's roughness/metalness texture; forcing
+      // the factors to matte would mute it. Materials without one stay matte, which
+      // is what the small builds always were.
+      if (!adopted.roughnessMap) {
+        adopted.roughness = 1;
+        adopted.metalness = 0;
+      }
+      // Source 2 stores two-layer blend weights in the vertex colour stream, not a
+      // tint. The --full build keeps that stream, the loader switches vertex colours
+      // on for it, and multiplying a texture by blend weights paints those surfaces
+      // black. The exporter only carries one of the two layers anyway.
+      adopted.vertexColors = false;
       // A textured surface has real normals worth using; anything else has none and
       // reads as shape only because flat shading derives one per triangle.
       adopted.flatShading = !adopted.map;
@@ -821,6 +852,34 @@ export const createPlayer = ({
   };
 
   /**
+   * Light the scene with the map's own baked reflections, when the conversion
+   * wrote them. `<map>.env.webp` is the first cubemap of the map's probe array,
+   * flattened to the same equirectangular shape as the sky — see src/mapEnvmap.js.
+   * The sky stays the background; this only replaces what shiny surfaces see.
+   */
+  let environmentFromCubemap = false;
+  const loadEnv = (mapUrl, isCurrent) => {
+    const url = mapUrl.replace(/\.glb(\?.*)?$/, ".env.webp");
+    if (url === mapUrl) return;
+    new THREE.TextureLoader().load(
+      url,
+      (texture) => {
+        if (!isCurrent()) {
+          texture.dispose();
+          return;
+        }
+        texture.mapping = THREE.EquirectangularReflectionMapping;
+        texture.colorSpace = THREE.SRGBColorSpace;
+        environmentFromCubemap = true;
+        scene.environment = texture;
+        scene.environmentIntensity = 0.5;
+      },
+      undefined,
+      () => {},
+    );
+  };
+
+  /**
    * Swap the invented gradient for the map's real sky, when there is one.
    *
    * Written beside the .glb as `<map>.sky.webp` by src/mapSky.js, because glTF has no
@@ -846,10 +905,90 @@ export const createPlayer = ({
         texture.colorSpace = THREE.SRGBColorSpace;
         scene.background?.dispose?.();
         scene.background = texture;
+        // The same image lights the scene: real ambient colour and real reflections
+        // instead of the invented hemisphere's guess. Kept weak — the baked atlas
+        // already carries the map's light, this only tints what it reaches.
+        // Unless the map's own baked cubemap already took the slot — indoors the
+        // sky is the one thing a reflection should not show.
+        if (!environmentFromCubemap) {
+          scene.environment = texture;
+          scene.environmentIntensity = 0.35;
+        }
       },
       undefined,
       () => {},
     );
+  };
+
+  /**
+   * Re-add the map's lamp entities as real point lights.
+   *
+   * `<map>.lights.json` carries them, written by src/mapSky.js. The baked atlas only
+   * carries these lights' bounce — the compiler leaves their direct throw to the
+   * engine — so rooms lit by lamps come out flat without them.
+   *
+   * Silent on failure like the sky: most conversions have no lights file.
+   */
+  const loadLights = async (mapUrl, isCurrent) => {
+    const url = mapUrl.replace(/\.glb(\?.*)?$/, ".lights.json");
+    if (url === mapUrl) return;
+    try {
+      const response = await fetch(url);
+      if (!response.ok) return;
+      const type = response.headers.get("content-type") ?? "";
+      if (type.includes("text/html")) return; // dev server 404s answer with index.html
+      const lights = await response.json();
+      if (!isCurrent() || !Array.isArray(lights)) return;
+      const brightest = lights
+        .filter((light) => Array.isArray(light.origin))
+        .sort((a, b) => b.lumens - a.lumens)
+        .slice(0, MAX_MAP_LIGHTS);
+      for (const { origin, color, lumens, range } of brightest) {
+        const rgb = (color ?? [255, 255, 255]).map((v) => v / 255);
+        const point = new THREE.PointLight(
+          new THREE.Color(...rgb),
+          lumens * CANDELA_PER_LUMEN * UNITS_PER_METRE * UNITS_PER_METRE,
+          range || 0,
+          2, // inverse-square decay, the physical one
+        );
+        point.position.set(...toWorld(...origin));
+        mapGroup.add(point);
+      }
+    } catch {
+      // No lights file is the normal case.
+    }
+  };
+
+  /**
+   * Aim the scene's sun with the map's real one, when the conversion wrote it.
+   *
+   * `<map>.sun.json` carries SolarPosition and SolarIrradiance from the sky material —
+   * the direction is the game's own, the colour is the irradiance normalised so only
+   * the tint is taken. The intensity stays the viewer's: the irradiance is raw
+   * radiance on the mapper's scale, and the baked atlas already carries the amount of
+   * light; what the invented sun got wrong was where it came from and its colour.
+   *
+   * Silent on failure like the sky: maps converted before this have no file.
+   */
+  const loadSun = async (mapUrl, isCurrent) => {
+    const url = mapUrl.replace(/\.glb(\?.*)?$/, ".sun.json");
+    if (url === mapUrl) return;
+    try {
+      const response = await fetch(url);
+      if (!response.ok) return;
+      const type = response.headers.get("content-type") ?? "";
+      if (type.includes("text/html")) return; // dev server 404s answer with index.html
+      const { direction, irradiance } = await response.json();
+      if (!isCurrent() || !Array.isArray(direction)) return;
+      const [x, y, z] = direction;
+      sun.position.set(...toWorld(x, y, z));
+      if (Array.isArray(irradiance)) {
+        const peak = Math.max(...irradiance, 1e-6);
+        sun.color.setRGB(...irradiance.map((v) => v / peak));
+      }
+    } catch {
+      // No sun file is the normal case; keep the invented one.
+    }
   };
 
   /**
@@ -1032,6 +1171,9 @@ export const createPlayer = ({
               // The sky is independent scenery, but it must not even start loading
               // until this map has survived every awaited stage above.
               loadSky(url, isCurrent);
+              loadEnv(url, isCurrent);
+              loadSun(url, isCurrent);
+              loadLights(url, isCurrent);
               mapGroup.visible = true;
               grid.visible = false;
               // With walls to hide behind, near geometry should not fade out.

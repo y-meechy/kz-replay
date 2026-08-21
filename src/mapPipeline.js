@@ -30,7 +30,8 @@ import sharp from "sharp";
 import { trimMap } from "./trimMap.js";
 import { buildLightmap } from "./mapLightmap.js";
 import { readMaterialNames } from "./mapMaterialNames.js";
-import { buildSky, readSkyName } from "./mapSky.js";
+import { buildEnvmap } from "./mapEnvmap.js";
+import { buildSky, readLights, readSkyName } from "./mapSky.js";
 import { borrowCs2Materials } from "./cs2Materials.js";
 import {
   cs2GameInfoPath,
@@ -99,11 +100,11 @@ const containedPath = (root, ...parts) => {
  */
 const textureCompressArgs = ({ withTextures, bakeLighting, textureSize }) => {
   if (withTextures) {
+    // A textureSize of 0 means "keep the exporter's own resolution" (the --full build).
     return [
       "--texture-compress",
       "webp",
-      "--texture-size",
-      String(textureSize),
+      ...(textureSize ? ["--texture-size", String(textureSize)] : []),
     ];
   }
   if (bakeLighting) {
@@ -212,6 +213,10 @@ export const convertMap = async ({
   // Leaves and branches are millions of triangles a player runs straight through.
   // Turn this off if a map uses plants as climbable props.
   dropFoliage = true,
+  // Fidelity over size: keep every vertex attribute the exporter wrote (tangents,
+  // vertex colours), so normal and roughness maps survive into the viewer. Pair with
+  // textureSize 0, dropFoliage false and a large budget for a 1:1 test build.
+  full = false,
   // Export the map's own materials and textures, which the workshop item carries and
   // which are the closest thing to what a player actually sees. On by default; it
   // roughly doubles the conversion time, because every material and image has to be
@@ -420,7 +425,18 @@ export const convertMap = async ({
         : "exporting world geometry to glTF…",
     );
     const exportDir = containedPath(workDir, "export", mapName);
-    await rm(exportDir, { recursive: true, force: true });
+    // CLI 20.0 writes a single -f match to the exact -o path plus extension, so the
+    // world lands beside exportDir as `<mapName>.glb` rather than inside it, with the
+    // collision mesh as `<mapName>_physics.glb`. Clear both layouts so a stale file
+    // can never be mistaken for this run's output.
+    const flatGlb = containedPath(workDir, "export", `${mapName}.glb`);
+    await Promise.all([
+      rm(exportDir, { recursive: true, force: true }),
+      rm(flatGlb, { force: true }),
+      rm(containedPath(workDir, "export", `${mapName}_physics.glb`), {
+        force: true,
+      }),
+    ]);
     await run(
       cli,
       [
@@ -440,12 +456,34 @@ export const convertMap = async ({
       BIG_OUTPUT,
     );
 
-    const raw = containedPath(exportDir, "maps", mapName, "world.glb");
+    // Older CLIs nest the world under the -o directory; 20.0 writes it flat.
+    const nested = containedPath(exportDir, "maps", mapName, "world.glb");
+    const raw = existsSync(nested) ? nested : flatGlb;
     if (!existsSync(raw)) {
       throw new Error(`the exporter produced no world.glb for ${mapName}`);
     }
+    // The flat layout skips creating exportDir, but the trim and optimize steps
+    // still write their intermediates inside it.
+    await mkdir(exportDir, { recursive: true });
 
-    // 3d. The map's real sky, written beside the .glb rather than into it: glTF has no
+    // 3d. The map's lamp entities, also written beside the .glb: the baked atlas only
+    // carries their bounce, so the viewer re-adds their direct light as point lights.
+    let lights = [];
+    let envmap = null;
+    if (withSky) {
+      lights = await readLights({ cli, mapVpk: innerVpk, mapName, workDir });
+      if (lights.length) log(`the map carries ${lights.length} lamp light(s)`);
+      // The map's own baked reflections, for the viewer's scene.environment.
+      envmap = await buildEnvmap({
+        cli,
+        mapVpk: innerVpk,
+        mapName,
+        workDir,
+        log,
+      });
+    }
+
+    // 3e. The map's real sky, written beside the .glb rather than into it: glTF has no
     // slot for a scene background, and the viewer wants it as an equirectangular image
     // either way. Costs a few kilobytes, and one CS2 archive part the first time a
     // given sky is seen.
@@ -468,15 +506,22 @@ export const convertMap = async ({
           paths: [skyName],
           log,
         });
-        if (missing.length) {
+        // Missing from CS2 means the sky is the mapper's own, shipped inside the
+        // workshop item — readable from the unpacked tree on a textured build.
+        const isCustomSky = missing.length > 0;
+        if (isCustomSky && !withTextures) {
           log(`CS2 has no ${skyName}, so the viewer keeps its gradient`);
         } else {
+          if (isCustomSky) {
+            log(`CS2 has no ${skyName} — trying the workshop item's own copy…`);
+          }
           sky = await buildSky({
             cli,
             cs2Dir,
             skyName,
             workDir,
             size: skySize,
+            input: isCustomSky ? gameDir : null,
             log,
           });
         }
@@ -513,6 +558,7 @@ export const convertMap = async ({
       input: raw,
       output: trimmed,
       dropFoliage,
+      keepAllAttributes: full,
       withTextures,
       materialNames,
       lightmap,
@@ -667,6 +713,29 @@ export const convertMap = async ({
       // any caller that simply does not ask for a sky deletes the one already there,
       // and every nightly refresh would quietly strip the skies off every map.
       await rm(skyPath, { force: true });
+    }
+
+    // The map's real sun, from the sky material. The viewer aims its directional
+    // light with it instead of the invented default. Stale-file rules match the sky.
+    const sunPath = containedPath(outputDir, `${mapName}.sun.json`);
+    if (sky?.sun) {
+      await writeFile(sunPath, JSON.stringify(sky.sun));
+    } else if (withSky) {
+      await rm(sunPath, { force: true });
+    }
+
+    const lightsPath = containedPath(outputDir, `${mapName}.lights.json`);
+    if (lights.length) {
+      await writeFile(lightsPath, JSON.stringify(lights));
+    } else if (withSky) {
+      await rm(lightsPath, { force: true });
+    }
+
+    const envPath = containedPath(outputDir, `${mapName}.env.webp`);
+    if (envmap) {
+      await writeFile(envPath, envmap.webp);
+    } else if (withSky) {
+      await rm(envPath, { force: true });
     }
 
     if (cleanup) {
