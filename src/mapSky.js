@@ -118,6 +118,9 @@ export const buildSky = async ({
   skyName,
   workDir,
   size = 1024,
+  // Where to read the sky from: the CS2 content cache by default, or the unpacked
+  // workshop tree for the custom skies mappers ship inside the item itself.
+  input = null,
   log = () => {},
 }) => {
   const dumpDir = join(workDir, "sky");
@@ -129,14 +132,25 @@ export const buildSky = async ({
     const base = skyName.replace(/\.vmat$/i, "");
     await run(
       cli,
-      ["-i", cs2IndexPath(cs2Dir), "-f", base, "-d", "-o", dumpDir],
+      [
+        "-i",
+        input ?? cs2IndexPath(cs2Dir),
+        // Folder input (the unpacked workshop tree) needs the recursive scan; the
+        // filter still applies, the CLI just refuses a bare folder without it.
+        ...(input ? ["--recursive"] : []),
+        "-f",
+        base,
+        "-d",
+        "-o",
+        dumpDir,
+      ],
       BIG_OUTPUT,
     ).catch(() => {});
 
     const exrPath = join(dumpDir, `${base}.exr`);
     const materialPath = join(dumpDir, `${base}.vmat`);
     if (!existsSync(exrPath)) {
-      log(`the sky ${skyName} is not in the CS2 cache, keeping the gradient`);
+      log(`the sky ${skyName} is not there, keeping the gradient`);
       return null;
     }
 

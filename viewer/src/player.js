@@ -769,8 +769,18 @@ export const createPlayer = ({
         : material;
       if (canBeLit) lightMapCandidates.add(adopted);
       adopted.side = THREE.FrontSide;
-      adopted.roughness = 1;
-      adopted.metalness = 0;
+      // The --full build ships the exporter's roughness/metalness texture; forcing
+      // the factors to matte would mute it. Materials without one stay matte, which
+      // is what the small builds always were.
+      if (!adopted.roughnessMap) {
+        adopted.roughness = 1;
+        adopted.metalness = 0;
+      }
+      // Source 2 stores two-layer blend weights in the vertex colour stream, not a
+      // tint. The --full build keeps that stream, the loader switches vertex colours
+      // on for it, and multiplying a texture by blend weights paints those surfaces
+      // black. The exporter only carries one of the two layers anyway.
+      adopted.vertexColors = false;
       // A textured surface has real normals worth using; anything else has none and
       // reads as shape only because flat shading derives one per triangle.
       adopted.flatShading = !adopted.map;
@@ -846,6 +856,11 @@ export const createPlayer = ({
         texture.colorSpace = THREE.SRGBColorSpace;
         scene.background?.dispose?.();
         scene.background = texture;
+        // The same image lights the scene: real ambient colour and real reflections
+        // instead of the invented hemisphere's guess. Kept weak — the baked atlas
+        // already carries the map's light, this only tints what it reaches.
+        scene.environment = texture;
+        scene.environmentIntensity = 0.35;
       },
       undefined,
       () => {},

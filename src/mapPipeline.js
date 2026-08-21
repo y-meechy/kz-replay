@@ -488,15 +488,22 @@ export const convertMap = async ({
           paths: [skyName],
           log,
         });
-        if (missing.length) {
+        // Missing from CS2 means the sky is the mapper's own, shipped inside the
+        // workshop item — readable from the unpacked tree on a textured build.
+        const isCustomSky = missing.length > 0;
+        if (isCustomSky && !withTextures) {
           log(`CS2 has no ${skyName}, so the viewer keeps its gradient`);
         } else {
+          if (isCustomSky) {
+            log(`CS2 has no ${skyName} — trying the workshop item's own copy…`);
+          }
           sky = await buildSky({
             cli,
             cs2Dir,
             skyName,
             workDir,
             size: skySize,
+            input: isCustomSky ? gameDir : null,
             log,
           });
         }
