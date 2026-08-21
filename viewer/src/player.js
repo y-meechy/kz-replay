@@ -297,7 +297,10 @@ export const createPlayer = ({
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   // Without tone mapping, several lights add up past 1.0 and every surface clips
   // to flat white, which looks like a paper cut-out instead of a room.
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  // Neutral (the Khronos PBR curve) over ACES: ACES pushes everything cooler and
+  // desaturates reds, which is a large part of why converted maps read colder
+  // than the same map in CS2. Neutral keeps the mapper's albedo colours.
+  renderer.toneMapping = THREE.NeutralToneMapping;
   // Measured with sampleBrightness() on kz_victoria in the follow view. 0.85 was set
   // back when the baked lighting never reached a textured map at all, so a surface was
   // lit only by the invented lights and the whole level read flat and much darker than
@@ -849,6 +852,34 @@ export const createPlayer = ({
   };
 
   /**
+   * Light the scene with the map's own baked reflections, when the conversion
+   * wrote them. `<map>.env.webp` is the first cubemap of the map's probe array,
+   * flattened to the same equirectangular shape as the sky — see src/mapEnvmap.js.
+   * The sky stays the background; this only replaces what shiny surfaces see.
+   */
+  let environmentFromCubemap = false;
+  const loadEnv = (mapUrl, isCurrent) => {
+    const url = mapUrl.replace(/\.glb(\?.*)?$/, ".env.webp");
+    if (url === mapUrl) return;
+    new THREE.TextureLoader().load(
+      url,
+      (texture) => {
+        if (!isCurrent()) {
+          texture.dispose();
+          return;
+        }
+        texture.mapping = THREE.EquirectangularReflectionMapping;
+        texture.colorSpace = THREE.SRGBColorSpace;
+        environmentFromCubemap = true;
+        scene.environment = texture;
+        scene.environmentIntensity = 0.5;
+      },
+      undefined,
+      () => {},
+    );
+  };
+
+  /**
    * Swap the invented gradient for the map's real sky, when there is one.
    *
    * Written beside the .glb as `<map>.sky.webp` by src/mapSky.js, because glTF has no
@@ -877,8 +908,12 @@ export const createPlayer = ({
         // The same image lights the scene: real ambient colour and real reflections
         // instead of the invented hemisphere's guess. Kept weak — the baked atlas
         // already carries the map's light, this only tints what it reaches.
-        scene.environment = texture;
-        scene.environmentIntensity = 0.35;
+        // Unless the map's own baked cubemap already took the slot — indoors the
+        // sky is the one thing a reflection should not show.
+        if (!environmentFromCubemap) {
+          scene.environment = texture;
+          scene.environmentIntensity = 0.35;
+        }
       },
       undefined,
       () => {},
@@ -1136,6 +1171,7 @@ export const createPlayer = ({
               // The sky is independent scenery, but it must not even start loading
               // until this map has survived every awaited stage above.
               loadSky(url, isCurrent);
+              loadEnv(url, isCurrent);
               loadSun(url, isCurrent);
               loadLights(url, isCurrent);
               mapGroup.visible = true;

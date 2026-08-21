@@ -22,7 +22,7 @@ import { join } from "node:path";
 import sharp from "sharp";
 import { EXRLoader } from "three/addons/loaders/EXRLoader.js";
 import { cs2IndexPath } from "./cs2Content.js";
-import { HALF_TO_FLOAT, encodeSrgb } from "./tonemap.js";
+import { HALF_TO_FLOAT, encodeSrgb, exposureFor } from "./tonemap.js";
 import { runTool as run } from "./toolProcess.js";
 
 const BIG_OUTPUT = { maxBuffer: 64 * 1024 * 1024 };
@@ -138,25 +138,6 @@ const field = (block, key) => {
   return match ? match[1].trim() : null;
 };
 
-/** Exposure that puts the sky's bright end on SKY_TARGET. Same idea as the lightmap. */
-const exposureFor = (sample, count) => {
-  const BINS = 4096;
-  const SCALE = BINS / 64;
-  const histogram = new Uint32Array(BINS + 1);
-  for (let index = 0; index < count; index += 1) {
-    histogram[Math.min(BINS, Math.max(0, (sample(index) * SCALE) | 0))] += 1;
-  }
-  const target = count * SKY_PERCENTILE;
-  let running = 0;
-  let bin = 0;
-  for (; bin < histogram.length; bin += 1) {
-    running += histogram[bin];
-    if (running >= target) break;
-  }
-  const bright = Math.max((bin + 0.5) / SCALE, 0.05);
-  return -Math.log(1 - SKY_TARGET) / bright;
-};
-
 /**
  * Decode, tone map and shrink a map's sky.
  *
@@ -239,6 +220,8 @@ export const buildSky = async ({
         0.7152 * at(index * 4 + 1) +
         0.0722 * at(index * 4 + 2),
       pixels,
+      SKY_PERCENTILE,
+      SKY_TARGET,
     );
 
     const out = Buffer.allocUnsafe(pixels * 3);

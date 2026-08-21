@@ -30,6 +30,7 @@ import sharp from "sharp";
 import { trimMap } from "./trimMap.js";
 import { buildLightmap } from "./mapLightmap.js";
 import { readMaterialNames } from "./mapMaterialNames.js";
+import { buildEnvmap } from "./mapEnvmap.js";
 import { buildSky, readLights, readSkyName } from "./mapSky.js";
 import { borrowCs2Materials } from "./cs2Materials.js";
 import {
@@ -468,9 +469,18 @@ export const convertMap = async ({
     // 3d. The map's lamp entities, also written beside the .glb: the baked atlas only
     // carries their bounce, so the viewer re-adds their direct light as point lights.
     let lights = [];
+    let envmap = null;
     if (withSky) {
       lights = await readLights({ cli, mapVpk: innerVpk, mapName, workDir });
       if (lights.length) log(`the map carries ${lights.length} lamp light(s)`);
+      // The map's own baked reflections, for the viewer's scene.environment.
+      envmap = await buildEnvmap({
+        cli,
+        mapVpk: innerVpk,
+        mapName,
+        workDir,
+        log,
+      });
     }
 
     // 3e. The map's real sky, written beside the .glb rather than into it: glTF has no
@@ -719,6 +729,13 @@ export const convertMap = async ({
       await writeFile(lightsPath, JSON.stringify(lights));
     } else if (withSky) {
       await rm(lightsPath, { force: true });
+    }
+
+    const envPath = containedPath(outputDir, `${mapName}.env.webp`);
+    if (envmap) {
+      await writeFile(envPath, envmap.webp);
+    } else if (withSky) {
+      await rm(envPath, { force: true });
     }
 
     if (cleanup) {
