@@ -99,11 +99,11 @@ const containedPath = (root, ...parts) => {
  */
 const textureCompressArgs = ({ withTextures, bakeLighting, textureSize }) => {
   if (withTextures) {
+    // A textureSize of 0 means "keep the exporter's own resolution" (the --full build).
     return [
       "--texture-compress",
       "webp",
-      "--texture-size",
-      String(textureSize),
+      ...(textureSize ? ["--texture-size", String(textureSize)] : []),
     ];
   }
   if (bakeLighting) {
@@ -212,6 +212,10 @@ export const convertMap = async ({
   // Leaves and branches are millions of triangles a player runs straight through.
   // Turn this off if a map uses plants as climbable props.
   dropFoliage = true,
+  // Fidelity over size: keep every vertex attribute the exporter wrote (tangents,
+  // vertex colours), so normal and roughness maps survive into the viewer. Pair with
+  // textureSize 0, dropFoliage false and a large budget for a 1:1 test build.
+  full = false,
   // Export the map's own materials and textures, which the workshop item carries and
   // which are the closest thing to what a player actually sees. On by default; it
   // roughly doubles the conversion time, because every material and image has to be
@@ -529,6 +533,7 @@ export const convertMap = async ({
       input: raw,
       output: trimmed,
       dropFoliage,
+      keepAllAttributes: full,
       withTextures,
       materialNames,
       lightmap,
@@ -683,6 +688,15 @@ export const convertMap = async ({
       // any caller that simply does not ask for a sky deletes the one already there,
       // and every nightly refresh would quietly strip the skies off every map.
       await rm(skyPath, { force: true });
+    }
+
+    // The map's real sun, from the sky material. The viewer aims its directional
+    // light with it instead of the invented default. Stale-file rules match the sky.
+    const sunPath = containedPath(outputDir, `${mapName}.sun.json`);
+    if (sky?.sun) {
+      await writeFile(sunPath, JSON.stringify(sky.sun));
+    } else if (withSky) {
+      await rm(sunPath, { force: true });
     }
 
     if (cleanup) {

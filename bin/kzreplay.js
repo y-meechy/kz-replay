@@ -252,6 +252,18 @@ const commands = {
       // The map's real sky. Needs tools/DepotDownloader and borrows one CS2 archive
       // part per distinct sky; --no-sky keeps the viewer's own gradient.
       withSky: !flags["no-sky"],
+      // --full is the fidelity build: full-size textures, tangents and vertex colours
+      // kept, foliage kept, a 4096 lighting atlas, and no size budget. Expect a file
+      // of a hundred megabytes or more; explicit size flags below still win.
+      ...(flags.full
+        ? {
+            full: true,
+            dropFoliage: false,
+            budgetBytes: Infinity,
+            textureSize: 0,
+            lightmapSize: 4096,
+          }
+        : {}),
       ...(flags["sky-size"] ? { skySize: Number(flags["sky-size"]) } : {}),
       ...(flags["texture-size"]
         ? { textureSize: Number(flags["texture-size"]) }

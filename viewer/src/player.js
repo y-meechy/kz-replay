@@ -853,6 +853,38 @@ export const createPlayer = ({
   };
 
   /**
+   * Aim the scene's sun with the map's real one, when the conversion wrote it.
+   *
+   * `<map>.sun.json` carries SolarPosition and SolarIrradiance from the sky material —
+   * the direction is the game's own, the colour is the irradiance normalised so only
+   * the tint is taken. The intensity stays the viewer's: the irradiance is raw
+   * radiance on the mapper's scale, and the baked atlas already carries the amount of
+   * light; what the invented sun got wrong was where it came from and its colour.
+   *
+   * Silent on failure like the sky: maps converted before this have no file.
+   */
+  const loadSun = async (mapUrl, isCurrent) => {
+    const url = mapUrl.replace(/\.glb(\?.*)?$/, ".sun.json");
+    if (url === mapUrl) return;
+    try {
+      const response = await fetch(url);
+      if (!response.ok) return;
+      const type = response.headers.get("content-type") ?? "";
+      if (type.includes("text/html")) return; // dev server 404s answer with index.html
+      const { direction, irradiance } = await response.json();
+      if (!isCurrent() || !Array.isArray(direction)) return;
+      const [x, y, z] = direction;
+      sun.position.set(...toWorld(x, y, z));
+      if (Array.isArray(irradiance)) {
+        const peak = Math.max(...irradiance, 1e-6);
+        sun.color.setRGB(...irradiance.map((v) => v / peak));
+      }
+    } catch {
+      // No sun file is the normal case; keep the invented one.
+    }
+  };
+
+  /**
    * Attach the map's baked lighting to its textured surfaces.
    *
    * A map converted with its real textures cannot carry the lighting atlas inside the
@@ -1032,6 +1064,7 @@ export const createPlayer = ({
               // The sky is independent scenery, but it must not even start loading
               // until this map has survived every awaited stage above.
               loadSky(url, isCurrent);
+              loadSun(url, isCurrent);
               mapGroup.visible = true;
               grid.visible = false;
               // With walls to hide behind, near geometry should not fade out.
