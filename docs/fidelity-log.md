@@ -75,11 +75,15 @@
   match. Before medians 602.05 / 589.20 / 592.85 ms; after 598.15 / 594.95 / 591.85 ms.
   No clear change beyond noise. Full raw reports and p95/p99 are committed under
   `docs/fidelity/`; this does not establish whole-branch or hardware-GPU parity.
-- Live next integration job: Docker `kz-fidelity-shaders` downloads shader archives
-  pinned to depot manifest `7673916425787288234` and links complete archives into the
-  isolated Grotto extraction. Check the existing job before starting a shader-aware export.
-- Git HTTPS publishing lacks terminal credentials; the GitHub connector remains
-  available. Remote main rechecked: still identical to `faf2c604`.
+- Shader integration job `kz-fidelity-shaders` exited 1: Steam returned 401 when
+  DepotDownloader requested historical manifest `7673916425787288234`. The manifest
+  is already cached locally; next safe implementation check is the existing authenticated
+  chunk-cache retrieval path, without replacing the pinned version with newer shaders.
+- Remote main rechecked: still identical to `faf2c604`. Implementation checkpoint
+  committed locally as `8452ebf`. PR publication is BLOCKED: Git HTTPS has no terminal
+  credentials, and the GitHub connector rejected its first write because approval is
+  required but the session policy is `never`. No remote write or PR was created.
+  User must enable an approved publishing path; do not claim the draft is published.
 - Next material investigation: upstream TextureDecoders/Common.cs decodes HemiOct RG
   into RGB and moves original B roughness into A. Exported normals may be correct while
   fallback material mapping drops this roughness channel; verify and repair using texture
