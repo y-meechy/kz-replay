@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Renderer regression checks</title>
+    <style>
+      body {
+        font: 16px system-ui;
+        background: #171b23;
+        color: #eee;
+        margin: 24px;
+      }
+      canvas {
+        display: block;
+        max-width: 100%;
+      }
+      pre {
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Renderer regression checks</h1>
+    <p>Synthetic assets: no game files required.</p>
+    <canvas aria-label="Lighting fixture"></canvas>
+    <pre role="status">Running…</pre>
+    <script type="module" src="./verify-renderer.js"></script>
+  </body>
+</html>

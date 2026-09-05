@@ -11,6 +11,7 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { TRACK_FLAG } from "../../src/track.js";
+import { attachBakedLight, createMapMaterials } from "./mapMaterials.js";
 import { findJumps, jumpAtTick } from "./jumps.js";
 import {
   analyseTeleports,
@@ -18,7 +19,6 @@ import {
   wastedRanges,
 } from "../../src/teleports.js";
 import {
-  CHARACTER_LAYER,
   createCharacter,
   disposeCharacterAsset,
   loadCharacterAsset,
@@ -74,15 +74,6 @@ const BAKED_LIGHT_GAIN = 3;
  * fills them straight back in.
  */
 const SCENE_LIGHT_SHARE = 0.4;
-
-/**
- * The name of an imported material that carries baked lighting, not a surface colour.
- *
- * src/trimMap.js names them: one per palette colour, `kz_<lowercase hex>_lit`. A map
- * converted with its real textures instead brings the mapper's own material names
- * through unchanged, and none of those can match this.
- */
-const BAKED_LIGHT_MATERIAL_NAME = /^kz_[0-9a-f]{6}_lit$/;
 
 /**
  * A vertical gradient, used as the scene background.
@@ -661,27 +652,6 @@ export const createPlayer = ({
   headlight.position.set(0, 0.35, 1); // camera space: shines forwards
   headlight.visible = false;
 
-  // The runner's own two lights, which nothing else in the scene can see. Fixed, and
-  // deliberately outside the dimming below: a body has no baked lighting of its own, so
-  // whatever the map brought, the person has to stay legible. See CHARACTER_LAYER.
-  const characterSky = new THREE.HemisphereLight("#b9d2f0", "#1a2233", 1.6);
-  characterSky.layers.set(CHARACTER_LAYER);
-  scene.add(characterSky);
-  const characterSun = new THREE.DirectionalLight("#ffffff", 1.4);
-  characterSun.position.set(0.4, 1, 0.5);
-  characterSun.layers.set(CHARACTER_LAYER);
-  scene.add(characterSun);
-
-  // And one carried by the camera, because the camera is almost always behind the runner
-  // and a light fixed in the world puts their back in shadow — which was the whole of the
-  // problem the first time: a lit map, two dedicated lights on the character, and still a
-  // dark outline, because every one of them was lighting the side nobody was looking at.
-  // Unlike the map's headlight this is on in every camera mode: from a distant free
-  // camera the runner is a small shape a long way off and needs the help more, not less.
-  const characterFill = new THREE.DirectionalLight("#e6f0ff", 1.6);
-  characterFill.position.set(0, 0.3, 1); // camera space: shines forwards
-  characterFill.layers.set(CHARACTER_LAYER);
-
   // A map that brought its own baked lighting does not need four invented lights at
   // full strength as well: at full strength they flood the baked shadows and the map
   // ends up as evenly lit as it was before any of this. Turned down, they only lift
@@ -716,79 +686,7 @@ export const createPlayer = ({
     side: THREE.FrontSide,
   });
 
-  // Every imported material is put on the same footing as the plain one above:
-  // flat shaded so the geometry reads without normals, front faces only so the
-  // camera can see into the level, and fully rough so nothing turns into a mirror.
-  // Only the colour is the map's own.
-  //
-  // A material named `kz_…_lit` carries the map's own baked lighting: the sun, the
-  // shadows and the darkening in every corner, as the mapper compiled them (see
-  // src/mapLightmap.js). It arrives as the base colour texture, because that is the
-  // only slot glTF has, and is moved to the light map slot here so it adds to the
-  // scene's lights instead of replacing the surface colour.
-  //
-  // The name is the only way to tell the two apart, and it has to be told apart: a map
-  // converted with its real surface textures also arrives with a base colour texture,
-  // and that one is the wall's own colour, which belongs exactly where it is. Treating
-  // it as a light map would multiply the level by a picture of brickwork.
-  //
-  // Adding rather than replacing, deliberately. Drawn unlit — colour times baked
-  // light and nothing else — a sunlit map looks better than this does, but anywhere
-  // the mapper baked no light the surface goes to pure black and the shape stops
-  // reading at all. kz_grotto's garden is half that. So the scene's lights stay on to
-  // carry the shape, and the baked light puts the map's real sun and shadow on top.
-  const adoptedMaterials = new Map();
-  // Set the moment the first baked-light material is adopted, so the load below knows
-  // to turn the scene's own lights down without walking the materials again.
-  let adoptedBakedLight = false;
-  // The variants that may be given the map's baked lighting later: the ones drawn on
-  // geometry that actually carries the atlas UV.
-  /**
-   * @param canBeLit whether the geometry drawing this has the atlas UV (`uv1`).
-   *
-   * A material is shared between many surfaces, and on most maps not all of them are
-   * lightmapped — kz_dojo's baked lighting reaches none of its 205 surfaces, and props
-   * never carry the atlas UV anywhere. So the two cases get separate materials, cloned
-   * on demand, and only one of them is ever given a light map.
-   *
-   * Not a nicety. Telling three.js a material has a light map when the geometry has no
-   * `uv1` to look it up with throws out of the render loop, and the replay stops dead
-   * mid-playback with nothing on screen to say why.
-   */
-  const adoptMapMaterial = (
-    material,
-    canBeLit,
-    lightMapCandidates,
-    ownedMaterials,
-  ) => {
-    const key = `${material.uuid}${canBeLit ? ":lit" : ""}`;
-    let adopted = adoptedMaterials.get(key);
-    if (!adopted) {
-      adopted = adoptedMaterials.has(material.uuid)
-        ? material.clone()
-        : material;
-      if (canBeLit) lightMapCandidates.add(adopted);
-      adopted.side = THREE.FrontSide;
-      adopted.roughness = 1;
-      adopted.metalness = 0;
-      // A textured surface has real normals worth using; anything else has none and
-      // reads as shape only because flat shading derives one per triangle.
-      adopted.flatShading = !adopted.map;
-      if (adopted.map && BAKED_LIGHT_MATERIAL_NAME.test(adopted.name)) {
-        adopted.lightMap = adopted.map;
-        // The trim pass leaves the atlas UV as the only texture coordinate set, so
-        // it is set zero here, where three.js would default a light map to set one.
-        adopted.lightMap.channel = 0;
-        adopted.lightMapIntensity = BAKED_LIGHT_GAIN;
-        adopted.map = null;
-        adoptedBakedLight = true;
-      }
-      adopted.needsUpdate = true;
-      adoptedMaterials.set(key, adopted);
-      ownedMaterials.add(adopted);
-    }
-    return adopted;
-  };
+  const mapMaterials = createMapMaterials(BAKED_LIGHT_GAIN);
 
   /**
    * Free a GLTF scene that never became part of this player's scene.
@@ -878,19 +776,11 @@ export const createPlayer = ({
       return;
     }
 
-    texture.colorSpace = THREE.SRGBColorSpace;
-    // three.js calls the second UV set `uv1`, which is where a light map looks by
-    // default — but only if it is told, because the default channel is 1 and the
-    // lightmapped-only build puts the atlas on set 0.
-    texture.channel = 1;
-    let attached = 0;
-    for (const material of lightMapCandidates) {
-      if (!material.map || material.lightMap) continue;
-      material.lightMap = texture;
-      material.lightMapIntensity = BAKED_LIGHT_GAIN;
-      material.needsUpdate = true;
-      attached += 1;
-    }
+    const attached = attachBakedLight(
+      texture,
+      lightMapCandidates,
+      BAKED_LIGHT_GAIN,
+    );
     if (attached) {
       dimSceneLightsForBakedMap();
     } else {
@@ -938,6 +828,7 @@ export const createPlayer = ({
           // surface to pure white no matter how the scene's own lights are tuned.
           // We do our own lighting, so the map's lights have to go.
           const importedLights = [];
+          const importedMaterials = new Set();
           gltf.scene.traverse((object) => {
             if (object.isLight) {
               importedLights.push(object);
@@ -947,8 +838,11 @@ export const createPlayer = ({
             // A coloured map arrives with a flat colour per surface, worked out from
             // the material the mapper used. Keep those and only match them to the
             // scene's lighting; a map with none still gets the plain concrete.
+            if (object.material?.isMeshStandardMaterial) {
+              importedMaterials.add(object.material);
+            }
             object.material = object.material?.isMeshStandardMaterial
-              ? adoptMapMaterial(
+              ? mapMaterials.adopt(
                   object.material,
                   object.geometry.hasAttribute("uv1"),
                   lightMapCandidates,
@@ -978,14 +872,14 @@ export const createPlayer = ({
           for (const light of importedLights) {
             light.removeFromParent();
           }
-          if (adoptedBakedLight) {
+          // Clones share the textures, but the unused source materials own no GPU state.
+          for (const material of importedMaterials) material.dispose();
+          if ([...ownedMaterials].some((material) => material.lightMap)) {
             dimSceneLightsForBakedMap();
           }
 
           const abandon = () => {
-            for (const [key, material] of adoptedMaterials) {
-              if (ownedMaterials.has(material)) adoptedMaterials.delete(key);
-            }
+            mapMaterials.release(ownedMaterials);
             disposeMapScene(gltf.scene);
           };
 
@@ -1071,7 +965,6 @@ export const createPlayer = ({
   camera.lookAt(center);
 
   camera.add(headlight);
-  camera.add(characterFill);
   scene.add(camera);
 
   let cameraMode = "freecam";
