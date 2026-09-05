@@ -1,33 +1,19 @@
-// Throw away the parts of an exported map the viewer can never show.
-//
-// Two things dominate a map export, and neither of them is the level:
-//
-// 1. Vertex attributes nobody reads. The exporter writes POSITION, NORMAL,
-//    TANGENT, TEXCOORD_0, TEXCOORD_1, COLOR_0 and more for every vertex. The viewer
-//    draws untextured flat-shaded geometry, so it reads POSITION and nothing else.
-//    On kz_moss that is nine attribute streams where one is used: roughly 70 bytes
-//    per vertex to carry 12 bytes of information. Dropping the rest is lossless.
-//
-// 2. Foliage. The ten largest meshes in kz_moss are poplar branches, dogwood
-//    branches and cypress trees. Leaves are millions of triangles that a KZ player
-//    runs straight through, and they hide the level behind them.
-//
-// Neither pass touches vertex positions, so the geometry a run is measured against
-// stays exactly where it was. That matters: mesh simplification does move it.
-//
-// The one attribute worth keeping besides POSITION is the lightmap UV, when the map's
-// own baked lighting is being shipped with it. See mapLightmap.js.
+// Preserve the export's material and geometry data before packing. Attribute and
+// foliage removal belongs only to the explicitly selected legacy profile: these
+// streams carry normal mapping, tint, cutouts and lighting in the fidelity renderer.
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import sharp from "sharp";
-import { NodeIO, TextureInfo } from "@gltf-transform/core";
+import { NodeIO } from "@gltf-transform/core";
+import { ALL_EXTENSIONS } from "@gltf-transform/extensions";
 import { dedup, prune } from "@gltf-transform/functions";
 import { colourFor, isInvisibleMaterial } from "./mapColours.js";
 import { normaliseMeshName } from "./mapMaterialNames.js";
+import { repairSourceMaterialAlpha } from "./sourceMaterialRepair.js";
 
-/** The only attribute the flat-shaded viewer material reads. */
+/** Attribute sets used only by the explicit legacy reduction profile. */
 const KEEP_ATTRIBUTES = new Set(["POSITION"]);
 
 /**
@@ -75,7 +61,7 @@ const KEEP_ATTRIBUTES_TEXTURED_LIT = new Set([
 ]);
 
 /** Which of the four sets above applies, given what this map is being shipped with. */
-const keepAttributesFor = ({ withTextures, withLightmap }) => {
+const legacyAttributesFor = ({ withTextures, withLightmap }) => {
   if (withTextures && withLightmap) return KEEP_ATTRIBUTES_TEXTURED_LIT;
   if (withLightmap) return KEEP_ATTRIBUTES_LIGHTMAP;
   if (withTextures) return KEEP_ATTRIBUTES_TEXTURED;
@@ -187,7 +173,14 @@ const fillInMissingTextures = async (glb) => {
 export const trimMap = async ({
   input,
   output,
-  dropFoliage = true,
+  // Visible scenery is source content, even when it is non-playable and expensive.
+  // Removing it is an explicit legacy choice, never the conversion default.
+  dropFoliage = false,
+  // `all` preserves every stream emitted by the exporter, including tangent-space
+  // and vertex-colour data used by normal mapped, tinted, and blended materials.
+  // `legacy` retains only the small set the old viewer happened to read.
+  attributePolicy = "all",
+  preserveMorphTargets = true,
   // Keep the map's own materials and the attributes they need. Everything above
   // about attribute bloat still applies, so the set kept is still the smallest one
   // that can be drawn — it is just three streams now instead of one.
@@ -201,22 +194,36 @@ export const trimMap = async ({
   // flat colour picks up the map's real sun, shadows and corner darkening. Requires
   // materialNames, because the flat colour is what the light is multiplied into.
   lightmap = null,
+  lightmapUvScale = [1, 1],
+  readSourceTexture = null,
 }) => {
-  const keepAttributes = keepAttributesFor({
-    withTextures,
-    withLightmap: Boolean(lightmap),
-  });
+  if (!new Set(["all", "legacy"]).has(attributePolicy)) {
+    throw new TypeError(`unknown map attribute policy: ${attributePolicy}`);
+  }
+  const keepAttributes =
+    attributePolicy === "all"
+      ? null
+      : legacyAttributesFor({
+          withTextures,
+          withLightmap: Boolean(lightmap),
+        });
   const texturesFilledIn = withTextures
     ? await fillInMissingTextures(input)
     : [];
-  const io = new NodeIO();
+  const io = new NodeIO().registerExtensions(ALL_EXTENSIONS);
   const document = await io.read(input);
   const root = document.getRoot();
+  const sourceMaterialRepairs =
+    withTextures && attributePolicy === "all"
+      ? await repairSourceMaterialAlpha(document, readSourceTexture)
+      : null;
 
   let trianglesBefore = 0;
+  let meshesBefore = 0;
   let trianglesRemoved = 0;
   let meshesRemoved = 0;
   const attributesDropped = new Set();
+  const attributesRetained = new Set();
   // How well the colouring did: how many surfaces the world actually named, and how
   // many landed on a rule rather than the default grey.
   let colouredTotal = 0;
@@ -237,22 +244,27 @@ export const trimMap = async ({
   // what the exporter brought and never what we just added.
   const importedMaterials = root.listMaterials();
   const importedTextures = root.listTextures();
+  const materialAudit = {
+    imported: importedMaterials.length,
+    textured: importedMaterials.filter((material) =>
+      Boolean(material.getBaseColorTexture()),
+    ).length,
+    doubleSided: importedMaterials.filter((material) =>
+      material.getDoubleSided(),
+    ).length,
+    alphaBlend: importedMaterials.filter(
+      (material) => material.getAlphaMode() === "BLEND",
+    ).length,
+    alphaMask: importedMaterials.filter(
+      (material) => material.getAlphaMode() === "MASK",
+    ).length,
+  };
 
   // The baked lighting, as one texture shared by every material in the map. Created
   // lazily so a map whose meshes all turn out to be unlit ships no image at all.
   // Only when there are no real textures. A textured map ships the atlas as its own
   // file instead, because glTF has no light map slot and the base colour slot is taken
   // by the mapper's own texture. See mapPipeline.js and the viewer's loadBakedLight().
-  let lightmapTexture = null;
-  const bakedLightTexture = () => {
-    if (!lightmapTexture) {
-      lightmapTexture = document
-        .createTexture("kz_baked_light")
-        .setImage(lightmap.png)
-        .setMimeType("image/png");
-    }
-    return lightmapTexture;
-  };
 
   // One material per colour rather than per mesh, so the compressor can still merge
   // everything that ends up the same colour into a single draw call. A lightmapped
@@ -264,20 +276,10 @@ export const trimMap = async ({
     let material = paletteByHex.get(key);
     if (!material) {
       material = document
-        .createMaterial(`kz_${hex.slice(1)}${lit ? "_lit" : ""}`)
+        .createMaterial(`kz_${hex.slice(1)}`)
         .setBaseColorFactor([...linear, 1])
         .setRoughnessFactor(1)
         .setMetallicFactor(0);
-      if (lit) {
-        material.setBaseColorTexture(bakedLightTexture());
-        // Every atlas UV is inside the image by construction, and clamping means a
-        // sample that lands a hair outside one cannot wrap around and pick up the
-        // lighting of a surface on the far side of the map.
-        material
-          .getBaseColorTextureInfo()
-          .setWrapS(TextureInfo.WrapMode.CLAMP_TO_EDGE)
-          .setWrapT(TextureInfo.WrapMode.CLAMP_TO_EDGE);
-      }
       paletteByHex.set(key, material);
     }
     return material;
@@ -294,7 +296,8 @@ export const trimMap = async ({
   };
 
   for (const mesh of root.listMeshes()) {
-    mesh.setWeights([]);
+    meshesBefore += 1;
+    if (!preserveMorphTargets) mesh.setWeights([]);
     const meshTriangles = mesh
       .listPrimitives()
       .reduce((total, primitive) => total + countTriangles(primitive), 0);
@@ -321,12 +324,31 @@ export const trimMap = async ({
       // Props are model instances rather than world geometry, and they were lit at
       // runtime in the game, so they carry no atlas UV and cannot be lightmapped.
       // There are five of them in kz_victoria, ten triangles in total.
-      const lit = Boolean(lightmap && primitive.getAttribute(LIGHTMAP_UV));
+      const lit = Boolean(
+        lightmap &&
+        primitive.getAttribute(LIGHTMAP_UV) &&
+        (!materialNames || named),
+      );
+      primitive.setExtras({
+        ...primitive.getExtras(),
+        kzLightmapUv: lit ? 1 : null,
+      });
+      if (lit && lightmapUvScale.some((value) => value !== 1)) {
+        const atlasUv = primitive.getAttribute(LIGHTMAP_UV).clone();
+        const values = atlasUv.getArray().slice();
+        for (let i = 0; i < values.length; i++)
+          values[i] *= lightmapUvScale[i % 2];
+        atlasUv.setArray(values);
+        primitive.setAttribute(LIGHTMAP_UV, atlasUv);
+      }
 
       for (const semantic of primitive.listSemantics()) {
-        if (keepAttributes.has(semantic)) continue;
-        attributesDropped.add(semantic);
-        primitive.setAttribute(semantic, null);
+        if (keepAttributes && !keepAttributes.has(semantic)) {
+          attributesDropped.add(semantic);
+          primitive.setAttribute(semantic, null);
+        } else {
+          attributesRetained.add(semantic);
+        }
       }
 
       // Morph targets: vertex deltas for deforming a model, which nothing here animates.
@@ -335,21 +357,19 @@ export const trimMap = async ({
       // path for any geometry that has targets, then reads the influences array the
       // loader never made, and throws out of the render loop. The replay stops dead the
       // moment the camera turns towards the pond.
-      for (const target of primitive.listTargets()) {
-        primitive.removeTarget(target);
-        morphTargetsRemoved += 1;
+      if (!preserveMorphTargets) {
+        for (const target of primitive.listTargets()) {
+          primitive.removeTarget(target);
+          morphTargetsRemoved += 1;
+        }
       }
-      if (lit && !withTextures) {
-        // Now that it is the only set left, it has to be set zero: glTF numbers
-        // texture coordinates from zero with no gaps. With textures it keeps its own
-        // number, because TEXCOORD_0 is the material's UV and is in use.
-        primitive.setAttribute(
-          "TEXCOORD_0",
-          primitive.getAttribute(LIGHTMAP_UV),
-        );
-        primitive.setAttribute(LIGHTMAP_UV, null);
-        litSurfaces += 1;
-      } else if (lit) {
+      if (lit) {
+        if (!primitive.getAttribute("TEXCOORD_0")) {
+          primitive.setAttribute(
+            "TEXCOORD_0",
+            primitive.getAttribute(LIGHTMAP_UV),
+          );
+        }
         litSurfaces += 1;
       } else if (lightmap) {
         // Nothing addresses the atlas, so drop the UV set with everything else.
@@ -382,8 +402,8 @@ export const trimMap = async ({
     }
   }
 
-  // The exporter's own materials only referenced textures through the attributes
-  // just removed, and every orphaned accessor and buffer view goes with them.
+  // Geometry-only exports replace the source materials. Textured fidelity exports
+  // retain them, including authored colours on materials without a base texture.
   if (!withTextures) {
     for (const material of importedMaterials) {
       material.dispose();
@@ -391,7 +411,7 @@ export const trimMap = async ({
     for (const texture of importedTextures) {
       texture.dispose();
     }
-  } else {
+  } else if (attributePolicy === "legacy") {
     // Not every Source 2 shader is a PBR material, and the ones that are not export
     // with no base colour texture and a white factor — so they render as pure white,
     // which is the brightest thing on screen and reads as a hole in the level. On
@@ -420,10 +440,17 @@ export const trimMap = async ({
   await io.write(output, document);
 
   return {
+    sourceMaterialRepairs,
+    attributePolicy,
+    meshesBefore,
+    meshesRetained: meshesBefore - meshesRemoved,
     trianglesBefore,
+    trianglesRetained: trianglesBefore - trianglesRemoved,
     trianglesRemoved,
     meshesRemoved,
     attributesDropped: [...attributesDropped].sort(),
+    attributesRetained: [...attributesRetained].sort(),
+    materials: materialAudit,
     colours: materialNames
       ? {
           palette: paletteByHex.size,
@@ -433,7 +460,12 @@ export const trimMap = async ({
         }
       : null,
     lightmap: lightmap
-      ? { size: lightmap.size, lit: litSurfaces, unlit: unlitSurfaces }
+      ? {
+          width: lightmap.irradiance.width,
+          height: lightmap.irradiance.height,
+          lit: litSurfaces,
+          unlit: unlitSurfaces,
+        }
       : null,
     untexturedMaterials,
     untexturedSurfaces,

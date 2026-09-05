@@ -1,0 +1,21 @@
+{
+  "url": "http://127.0.0.1:5181/scripts/fidelity-viewer.html",
+  "trackUrl": "/viewer/public/tracks/019ea309-1656-7e02-b6c9-9c6b00294481.kztrack",
+  "mapUrl": "/viewer/public/maps/kz_grotto.glb",
+  "width": 1280,
+  "height": 720,
+  "pixelRatio": 1,
+  "software": false,
+  "overlays": true,
+  "repeats": 3,
+  "startSeconds": 8,
+  "seconds": 10,
+  "cameraMode": "first-person",
+  "workload": "fixed-first-person-path",
+  "pathFps": 60,
+  "viewpoints": [
+    { "id": "start", "seconds": 3 },
+    { "id": "garden", "seconds": 12 },
+    { "id": "interior", "seconds": 40 }
+  ]
+}

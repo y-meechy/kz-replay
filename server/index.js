@@ -89,6 +89,9 @@ const MIME = {
   ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".glb": "model/gltf-binary",
+  ".ktx2": "image/ktx2",
+  ".exr": "image/x-exr",
+  ".wasm": "application/wasm",
   ".kztrack": "application/octet-stream",
   ".png": "image/png",
   ".jpg": "image/jpeg",
@@ -103,6 +106,9 @@ const MIME = {
 // the mapper republishes, and then it gets a new checksum in the manifest. The JSON
 // the catalog writes changes nightly, so it must not be cached for long.
 const cacheControl = (path) => {
+  if (path.endsWith(".assets.json")) return "no-cache";
+  if (/\.assets\/[a-f0-9]{24}\//.test(path))
+    return "public, max-age=31536000, immutable";
   if (path.endsWith(".glb")) return "public, max-age=86400";
   if (path.endsWith(".json")) return "public, max-age=300";
   if (path.endsWith(".html")) return "no-cache";

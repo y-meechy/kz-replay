@@ -39,6 +39,40 @@ downloaded as tools; their licenses are not replaced by this project's AGPL lice
 The npm packages listed in `package.json` likewise retain their own licenses. See
 their package metadata and distributed license files before redistribution.
 
+GPU texture conversion uses [KTX-Software 4.4.2](https://github.com/KhronosGroup/KTX-Software/releases/tag/v4.4.2).
+The browser bundles Three.js's Basis Universal transcoder; retain its distributed
+license notices when packaging the viewer.
+
+The Source 2 lighting/channel interpretation in `src/mapEnvironment.js`,
+`src/sourceMaterialRepair.js`, and `viewer/src/mapLighting.js` was checked against
+ValveResourceFormat revision
+[`00c629d321171ad0b9be83994c5e9cb15e8c5bd9`](https://github.com/ValveResourceFormat/ValveResourceFormat/tree/00c629d321171ad0b9be83994c5e9cb15e8c5bd9).
+Its MIT notice is retained here for the adapted rendering logic:
+
+```text
+The MIT License (MIT)
+
+Copyright (c) 2015 ValveResourceFormat Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ## Steam Workshop maps and mapper content
 
 Steam Workshop maps, geometry, textures, materials, models, lightmaps, artwork,

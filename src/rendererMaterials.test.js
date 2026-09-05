@@ -78,7 +78,7 @@ test("an embedded UV0 atlas survives adoption and an external atlas", () => {
   assert.equal(adopted.map, null);
   assert.equal(adopted.lightMap, embedded);
   assert.equal(adopted.lightMap.channel, 0);
-  assert.equal(adopted.flatShading, true);
+  assert.equal(adopted.flatShading, source.flatShading);
   assert.equal(source.map, embedded);
   assert.equal(source.lightMap, null);
   assert.equal(attachBakedLight(new THREE.Texture(), candidates, 3), 0);
@@ -116,4 +116,108 @@ test("only character materials receive the extra lighting shader", () => {
   );
   assert.deepEqual(mapShader.uniforms, {});
   runner.dispose();
+});
+
+test("map adoption preserves authored PBR, alpha, sidedness and normal handling", () => {
+  const source = new THREE.MeshPhysicalMaterial({
+    color: "#bc3412",
+    roughness: 0.24,
+    metalness: 0.8,
+    side: THREE.DoubleSide,
+    flatShading: false,
+    normalMap: new THREE.Texture(),
+    roughnessMap: new THREE.Texture(),
+    metalnessMap: new THREE.Texture(),
+    emissive: "#123456",
+    emissiveIntensity: 2,
+    transparent: true,
+    opacity: 0.65,
+    alphaTest: 0.4,
+    clearcoat: 0.7,
+  });
+  source.normalScale.set(0.4, -0.8);
+  const adopted = createMapMaterials(1).adopt(
+    source,
+    false,
+    new Set(),
+    new Set(),
+  );
+  assert(adopted.isMeshPhysicalMaterial);
+  for (const property of [
+    "roughness",
+    "metalness",
+    "side",
+    "flatShading",
+    "normalMap",
+    "roughnessMap",
+    "metalnessMap",
+    "emissiveIntensity",
+    "transparent",
+    "opacity",
+    "alphaTest",
+    "clearcoat",
+  ])
+    assert.equal(adopted[property], source[property], property);
+  assert(adopted.color.equals(source.color));
+  assert(adopted.emissive.equals(source.emissive));
+  assert(adopted.normalScale.equals(source.normalScale));
+});
+
+test("RGBM lightmap remains linear and changes only baked-light shader sampling", () => {
+  const source = new THREE.MeshStandardMaterial({
+    normalMap: new THREE.Texture(),
+  });
+  const candidates = new Set();
+  const adopted = createMapMaterials(1).adopt(
+    source,
+    true,
+    candidates,
+    new Set(),
+  );
+  const atlas = new THREE.Texture();
+  assert.equal(
+    attachBakedLight(atlas, candidates, 1, {
+      encoding: "rgbm8-linear",
+      range: 32,
+      excludeSceneLights: true,
+    }),
+    1,
+  );
+  assert.equal(atlas.colorSpace, THREE.NoColorSpace);
+  assert.equal(adopted.normalMap, source.normalMap);
+  const shader = {
+    uniforms: {},
+    fragmentShader: THREE.ShaderLib.standard.fragmentShader,
+  };
+  adopted.onBeforeCompile(shader);
+  assert.equal(shader.uniforms.kzLightmapRange.value, 32);
+  assert(shader.fragmentShader.includes("uniform float kzLightmapRange;"));
+  assert(
+    shader.fragmentShader.includes(
+      "lightMapTexel.rgb * lightMapTexel.a * kzLightmapRange",
+    ),
+  );
+  assert(
+    shader.fragmentShader.includes(
+      "reflectedLight.directDiffuse = vec3( 0.0 );",
+    ),
+  );
+  assert(shader.fragmentShader.includes("#include <normal_fragment_maps>"));
+  assert(shader.fragmentShader.includes("#include <lights_fragment_end>"));
+  assert(shader.fragmentShader.includes("#include <tonemapping_fragment>"));
+  assert.equal(adopted.flatShading, false);
+  assert.equal(source.lightMap, null);
+});
+
+test("unknown HDR encodings and malformed ranges fail before mutating textures", () => {
+  for (const descriptor of [
+    { encoding: "rgbm8-linear", range: 0 },
+    { encoding: "rgbm8-linear", range: NaN },
+    { encoding: "rgbm8-linear", range: Infinity },
+    { encoding: "invented" },
+  ]) {
+    const atlas = new THREE.Texture();
+    assert.throws(() => attachBakedLight(atlas, new Set(), 1, descriptor));
+    assert.equal(atlas.flipY, true);
+  }
 });

@@ -1,0 +1,5 @@
+{
+  "hud": { "left": 0, "top": 0, "width": 1920, "height": 120 },
+  "center": { "left": 480, "top": 270, "width": 960, "height": 540 },
+  "lower-right": { "left": 1440, "top": 810, "width": 480, "height": 270 }
+}

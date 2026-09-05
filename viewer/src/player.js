@@ -3,6 +3,7 @@
 // a useEffect that calls createPlayer() and dispose() — no three.js in components.
 
 import * as THREE from "three";
+import { referenceCameraPose } from "./referenceCamera.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 import { Line2 } from "three/addons/lines/Line2.js";
@@ -12,6 +13,9 @@ import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { TRACK_FLAG } from "../../src/track.js";
 import { attachBakedLight, createMapMaterials } from "./mapMaterials.js";
+import { resolveMapAssets, legacySidecarUrl } from "./mapAssets.js";
+import { loadHdrSky } from "./mapSky.js";
+import { createMapLoader } from "./mapLoader.js";
 import { findJumps, jumpAtTick } from "./jumps.js";
 import {
   analyseTeleports,
@@ -463,7 +467,9 @@ export const createPlayer = ({
    * they are off unless the camera is riding along or a second run is on screen to
    * be told apart from the first.
    */
-  const showGuides = () => cameraMode === "follow" || Boolean(rival);
+  let replayOverlaysVisible = true;
+  const showGuides = () =>
+    replayOverlaysVisible && (cameraMode === "follow" || Boolean(rival));
 
   // --- the run being compared against --------------------------------------
   // A second run shown at the same time, on the same clock: both markers start
@@ -593,6 +599,7 @@ export const createPlayer = ({
     return pov;
   };
 
+  const endpointDots = [];
   const addDot = (color, index, radius) => {
     const mesh = new THREE.Mesh(
       new THREE.SphereGeometry(radius, 16, 12),
@@ -600,6 +607,7 @@ export const createPlayer = ({
     );
     mesh.position.set(...worldPointAt(index));
     scene.add(mesh);
+    endpointDots.push(mesh);
   };
 
   addDot("#4ade80", 0, 10);
@@ -687,6 +695,9 @@ export const createPlayer = ({
   });
 
   const mapMaterials = createMapMaterials(BAKED_LIGHT_GAIN);
+  const mapLoadTimings = {};
+  let loadedAssets = null;
+  let activeMapMaterials = new Set();
 
   /**
    * Free a GLTF scene that never became part of this player's scene.
@@ -730,23 +741,46 @@ export const createPlayer = ({
    * sky. The dev server answers unknown paths with index.html, so the loader is also
    * the thing that rejects an HTML "hit".
    */
-  const loadSky = (mapUrl, isCurrent) => {
-    const url = mapUrl.replace(/\.glb(\?.*)?$/, ".sky.webp");
-    if (url === mapUrl) return;
-    new THREE.TextureLoader().load(
-      url,
-      (texture) => {
-        if (!isCurrent()) {
-          texture.dispose();
-          return;
-        }
-        texture.mapping = THREE.EquirectangularReflectionMapping;
-        texture.colorSpace = THREE.SRGBColorSpace;
-        scene.background?.dispose?.();
-        scene.background = texture;
-      },
-      undefined,
-      () => {},
+  const loadSky = async (mapUrl, isCurrent, assets) => {
+    if (isCurrent()) {
+      scene.background?.dispose?.();
+      scene.background = skyTexture();
+      scene.backgroundRotation.set(0, 0, 0);
+    }
+    const url = assets.legacy
+      ? legacySidecarUrl(mapUrl, ".sky.webp")
+      : assets.files.sky?.url;
+    if (!url) return;
+    if (assets.files?.sky?.encoding === "exr-linear") {
+      const skyAsset = await loadHdrSky(url, assets.files.sky);
+      if (!isCurrent()) {
+        skyAsset.dispose();
+        return;
+      }
+      scene.background?.dispose?.();
+      scene.background = skyAsset.texture;
+      scene.backgroundRotation.copy(skyAsset.rotation);
+      return;
+    }
+    return new Promise((resolve) =>
+      new THREE.TextureLoader().load(
+        url,
+        (texture) => {
+          if (!isCurrent()) {
+            texture.dispose();
+            resolve();
+            return;
+          }
+          texture.mapping = THREE.EquirectangularReflectionMapping;
+          texture.colorSpace = THREE.SRGBColorSpace;
+          scene.background?.dispose?.();
+          scene.background = texture;
+          scene.backgroundRotation.set(0, 0, 0);
+          resolve();
+        },
+        undefined,
+        () => resolve(),
+      ),
     );
   };
 
@@ -762,29 +796,70 @@ export const createPlayer = ({
    * Silent on failure, like the sky: a map converted with no lighting, or with the
    * lighting embedded because it had no textures, simply has no file to fetch.
    */
-  const loadBakedLight = async (mapUrl, lightMapCandidates, isCurrent) => {
-    const url = mapUrl.replace(/\.glb(\?.*)?$/, ".light.webp");
-    if (url === mapUrl) return;
+  const loadBakedLight = async (
+    mapUrl,
+    lightMapCandidates,
+    isCurrent,
+    assets,
+  ) => {
+    const descriptor = assets.files?.lightmapIrradiance;
+    const url = assets.legacy
+      ? legacySidecarUrl(mapUrl, ".light.webp")
+      : descriptor?.url;
+    if (!url) return;
     const texture = await new Promise((resolve) => {
       new THREE.TextureLoader().load(url, resolve, undefined, () =>
         resolve(null),
       );
     });
-    if (!texture) return;
+    if (!texture) {
+      if (!assets.legacy)
+        throw new Error("Published irradiance texture could not be loaded");
+      return;
+    }
     if (!isCurrent()) {
       texture.dispose();
       return;
     }
 
-    const attached = attachBakedLight(
-      texture,
-      lightMapCandidates,
-      BAKED_LIGHT_GAIN,
-    );
-    if (attached) {
-      dimSceneLightsForBakedMap();
-    } else {
-      texture.dispose();
+    let shadowTexture = null;
+    let adopted = false;
+    try {
+      const environment = assets.revision?.converter?.settings?.environment;
+      if (environment?.sun && assets.files.lightmapShadows) {
+        shadowTexture = await new THREE.TextureLoader().loadAsync(
+          assets.files.lightmapShadows.url,
+        );
+        shadowTexture.colorSpace = THREE.NoColorSpace;
+        shadowTexture.flipY = false;
+        shadowTexture.wrapS = shadowTexture.wrapT = THREE.ClampToEdgeWrapping;
+        shadowTexture.generateMipmaps = false;
+        shadowTexture.minFilter = THREE.LinearFilter;
+        if (!isCurrent()) return;
+      }
+
+      const attached = attachBakedLight(
+        texture,
+        lightMapCandidates,
+        assets.legacy ? BAKED_LIGHT_GAIN : 1,
+        descriptor
+          ? {
+              ...descriptor,
+              excludeSceneLights: true,
+              sun: environment?.sun,
+              shadowTexture,
+            }
+          : undefined,
+      );
+      adopted = attached > 0;
+      if (attached && assets.legacy) {
+        dimSceneLightsForBakedMap();
+      }
+    } finally {
+      if (!adopted) {
+        texture.dispose();
+        shadowTexture?.dispose();
+      }
     }
   };
 
@@ -808,141 +883,203 @@ export const createPlayer = ({
     cancelActiveMapLoad = cancel;
     const isCurrent = () => !disposed && generation === mapLoadGeneration;
 
-    const operation = new Promise((resolve, reject) => {
-      const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
-      loader.load(
-        url,
-        (gltf) => {
+    const loadStarted = performance.now();
+    const operation = resolveMapAssets(url).then(
+      (assets) =>
+        new Promise((resolve, reject) => {
           if (!isCurrent()) {
-            disposeMapScene(gltf.scene);
             reject(cancelledMapLoadError());
             return;
           }
-
-          let triangles = 0;
-          let attached = false;
-          const lightMapCandidates = new Set();
-          const ownedMaterials = new Set();
-          // Maps ship their own lights, and their intensities are in real world
-          // units: kz_victoria's sun arrives at intensity 2732, which washes every
-          // surface to pure white no matter how the scene's own lights are tuned.
-          // We do our own lighting, so the map's lights have to go.
-          const importedLights = [];
-          const importedMaterials = new Set();
-          gltf.scene.traverse((object) => {
-            if (object.isLight) {
-              importedLights.push(object);
-              return;
-            }
-            if (!object.isMesh) return;
-            // A coloured map arrives with a flat colour per surface, worked out from
-            // the material the mapper used. Keep those and only match them to the
-            // scene's lighting; a map with none still gets the plain concrete.
-            if (object.material?.isMeshStandardMaterial) {
-              importedMaterials.add(object.material);
-            }
-            object.material = object.material?.isMeshStandardMaterial
-              ? mapMaterials.adopt(
-                  object.material,
-                  object.geometry.hasAttribute("uv1"),
-                  lightMapCandidates,
-                  ownedMaterials,
-                )
-              : mapMaterial;
-            object.frustumCulled = true;
-
-            // A mesh with morph targets and no influences to blend them with kills the
-            // renderer: three.js takes the morph path for any geometry that has targets,
-            // reads an array the loader never created, and throws out of the render loop
-            // the first frame that mesh is drawn — which is when the camera happens to
-            // turn towards it. src/trimMap.js drops targets now, but every map converted
-            // before that still carries them, so they are dropped here too.
-            if (
-              object.geometry.morphAttributes &&
-              !object.morphTargetInfluences
-            ) {
-              object.geometry.morphAttributes = {};
-            }
-            const index = object.geometry.getIndex();
-            triangles +=
-              (index
-                ? index.count
-                : object.geometry.attributes.position.count) / 3;
-          });
-          for (const light of importedLights) {
-            light.removeFromParent();
-          }
-          // Clones share the textures, but the unused source materials own no GPU state.
-          for (const material of importedMaterials) material.dispose();
-          if ([...ownedMaterials].some((material) => material.lightMap)) {
-            dimSceneLightsForBakedMap();
-          }
-
-          const abandon = () => {
-            mapMaterials.release(ownedMaterials);
-            disposeMapScene(gltf.scene);
-          };
-
-          const finish = async () => {
-            try {
-              // The baked lighting is awaited, and that is the whole point. Adding a light
-              // map to a material changes which shader it needs, so attaching it to a map
-              // already on screen makes three.js rebuild every one of them in a single
-              // frame — 80 programs on kz_dojo — and the replay visibly stops dead a couple
-              // of seconds in, exactly when the image finishes downloading. Finish the
-              // materials first, then show the map.
-              try {
-                await Promise.race([
-                  loadBakedLight(url, lightMapCandidates, isCurrent),
-                  cancelled,
-                ]);
-              } catch {
-                // Like a missing lightmap, a malformed one falls back to the scene
-                // lights. Cancellation is the only reason not to keep loading.
-                if (!isCurrent()) throw cancelledMapLoadError();
+          const mapLoader = createMapLoader(renderer);
+          const { loader } = mapLoader;
+          loader.load(
+            assets.geometryUrl,
+            (gltf) => {
+              mapLoader.dispose();
+              if (!isCurrent()) {
+                disposeMapScene(gltf.scene);
+                reject(cancelledMapLoadError());
+                return;
               }
-              if (!isCurrent()) throw cancelledMapLoadError();
 
-              // And compile them before the first frame that needs them, rather than
-              // when the camera turns and a wall is drawn for the first time. That
-              // stall is not new — it is every map's first draw — but real textures
-              // made it long enough to feel like a freeze.
-              if (renderer.compileAsync) {
-                try {
-                  await Promise.race([
-                    renderer.compileAsync(gltf.scene, camera, scene),
-                    cancelled,
-                  ]);
-                } catch {
-                  // Compilation is an optimisation. A driver that cannot precompile
-                  // can still compile lazily on the first rendered frame.
-                  if (!isCurrent()) throw cancelledMapLoadError();
+              let triangles = 0;
+              let attached = false;
+              const lightMapCandidates = new Set();
+              const ownedMaterials = new Set();
+              // The exporter does not preserve Source's baked/runtime division.
+              // Versioned assets supply the stationary sun and its actual shadow mask
+              // separately; importing punctual lights here would double that light.
+              const importedLights = [];
+              const importedMaterials = new Set();
+              gltf.scene.traverse((object) => {
+                if (object.isLight) {
+                  importedLights.push(object);
+                  return;
                 }
-              }
-              if (!isCurrent()) throw cancelledMapLoadError();
+                if (!object.isMesh) return;
+                // A coloured map arrives with a flat colour per surface, worked out from
+                // the material the mapper used. Keep those and only match them to the
+                // scene's lighting; a map with none still gets the plain concrete.
+                const adopt = (material) => {
+                  if (!material) return mapMaterial;
+                  importedMaterials.add(material);
+                  const adopted = mapMaterials.adopt(
+                    material,
+                    object.geometry.hasAttribute("uv1") &&
+                      (assets.legacy ||
+                        object.geometry.userData.kzLightmapUv === 1),
+                    lightMapCandidates,
+                    ownedMaterials,
+                    { hasNormals: object.geometry.hasAttribute("normal") },
+                  );
+                  for (const slot of [
+                    "map",
+                    "normalMap",
+                    "roughnessMap",
+                    "metalnessMap",
+                    "emissiveMap",
+                    "aoMap",
+                  ]) {
+                    const texture = adopted[slot];
+                    if (texture)
+                      texture.anisotropy = Math.min(
+                        8,
+                        renderer.capabilities.getMaxAnisotropy(),
+                      );
+                  }
+                  return adopted;
+                };
+                object.material = Array.isArray(object.material)
+                  ? object.material.map(adopt)
+                  : adopt(object.material);
+                object.frustumCulled = true;
 
-              mapGroup.add(gltf.scene);
-              attached = true;
-              // The sky is independent scenery, but it must not even start loading
-              // until this map has survived every awaited stage above.
-              loadSky(url, isCurrent);
-              mapGroup.visible = true;
-              grid.visible = false;
-              // With walls to hide behind, near geometry should not fade out.
-              scene.fog = new THREE.Fog(SKY_HORIZON, span * 2, span * 8);
-              resolve({ triangles: Math.round(triangles) });
-            } catch (error) {
+                // A mesh with morph targets and no influences to blend them with kills the
+                // renderer: three.js takes the morph path for any geometry that has targets,
+                // reads an array the loader never created, and throws out of the render loop
+                // the first frame that mesh is drawn — which is when the camera happens to
+                // turn towards it. src/trimMap.js drops targets now, but every map converted
+                // before that still carries them, so they are dropped here too.
+                if (
+                  object.geometry.morphAttributes &&
+                  !object.morphTargetInfluences
+                ) {
+                  object.geometry.morphAttributes = {};
+                }
+                const index = object.geometry.getIndex();
+                triangles +=
+                  (index
+                    ? index.count
+                    : object.geometry.attributes.position.count) / 3;
+              });
+              for (const light of importedLights) {
+                light.removeFromParent();
+              }
+              // Clones share the textures, but the unused source materials own no GPU state.
+              for (const material of importedMaterials) material.dispose();
+              if ([...ownedMaterials].some((material) => material.lightMap)) {
+                dimSceneLightsForBakedMap();
+              }
+
+              const abandon = () => {
+                mapMaterials.release(ownedMaterials);
+                disposeMapScene(gltf.scene);
+              };
+
+              const finish = async () => {
+                try {
+                  // The baked lighting is awaited, and that is the whole point. Adding a light
+                  // map to a material changes which shader it needs, so attaching it to a map
+                  // already on screen makes three.js rebuild every one of them in a single
+                  // frame — 80 programs on kz_dojo — and the replay visibly stops dead a couple
+                  // of seconds in, exactly when the image finishes downloading. Finish the
+                  // materials first, then show the map.
+                  try {
+                    await Promise.race([
+                      loadBakedLight(
+                        url,
+                        lightMapCandidates,
+                        isCurrent,
+                        assets,
+                      ),
+                      cancelled,
+                    ]);
+                  } catch (error) {
+                    // Missing legacy sidecars are normal. A published bundle is an
+                    // explicit contract: never disguise a broken atlas as fallback light.
+                    if (!isCurrent()) throw cancelledMapLoadError();
+                    if (!assets.legacy) throw error;
+                  }
+                  if (!isCurrent()) throw cancelledMapLoadError();
+                  mapLoadTimings.assetsMs = performance.now() - loadStarted;
+                  const compileStarted = performance.now();
+
+                  // And compile them before the first frame that needs them, rather than
+                  // when the camera turns and a wall is drawn for the first time. That
+                  // stall is not new — it is every map's first draw — but real textures
+                  // made it long enough to feel like a freeze.
+                  if (renderer.compileAsync) {
+                    try {
+                      await Promise.race([
+                        renderer.compileAsync(gltf.scene, camera, scene),
+                        cancelled,
+                      ]);
+                    } catch {
+                      // Compilation is an optimisation. A driver that cannot precompile
+                      // can still compile lazily on the first rendered frame.
+                      if (!isCurrent()) throw cancelledMapLoadError();
+                    }
+                  }
+                  if (!isCurrent()) throw cancelledMapLoadError();
+                  mapLoadTimings.compileMs = performance.now() - compileStarted;
+
+                  // A second successful load replaces the prior generation. Keep it visible
+                  // until its replacement is complete, then free all shared resources once.
+                  if (mapGroup.children.length) {
+                    mapMaterials.release(activeMapMaterials);
+                    disposeMapScene(mapGroup);
+                    mapGroup.clear();
+                  }
+                  mapGroup.add(gltf.scene);
+                  attached = true;
+                  loadedAssets = assets;
+                  activeMapMaterials = ownedMaterials;
+                  // The sky is independent scenery, but it must not even start loading
+                  // until this map has survived every awaited stage above.
+                  try {
+                    await loadSky(url, isCurrent, assets);
+                  } catch (error) {
+                    console.warn(`Map sky unavailable: ${error.message}`);
+                  }
+                  if (!isCurrent()) throw cancelledMapLoadError();
+                  mapGroup.visible = true;
+                  grid.visible = false;
+                  // With walls to hide behind, near geometry should not fade out.
+                  scene.fog = assets.legacy
+                    ? new THREE.Fog(SKY_HORIZON, span * 2, span * 8)
+                    : null;
+                  mapLoadTimings.readyMs = performance.now() - loadStarted;
+                  resolve({
+                    triangles: Math.round(triangles),
+                    timings: { ...mapLoadTimings },
+                  });
+                } catch (error) {
+                  reject(error);
+                } finally {
+                  if (!attached) abandon();
+                }
+              };
+              void finish();
+            },
+            undefined,
+            (error) => {
+              mapLoader.dispose();
               reject(error);
-            } finally {
-              if (!attached) abandon();
-            }
-          };
-          void finish();
-        },
-        undefined,
-        reject,
-      );
-    });
+            },
+          );
+        }),
+    );
 
     const cancelledResult = cancelled.then(() => {
       throw cancelledMapLoadError();
@@ -1279,7 +1416,7 @@ export const createPlayer = ({
     headlight.visible = mapGroup.visible;
 
     if (cameraMode === "freecam") {
-      setFov(60);
+      setFov(referenceVerticalFov ?? 60);
       flyFreecam(delta);
       return;
     }
@@ -1331,7 +1468,9 @@ export const createPlayer = ({
     }
   };
 
+  let referenceVerticalFov = null;
   const setCameraMode = (mode) => {
+    referenceVerticalFov = null;
     cameraMode = CAMERA_MODES.includes(mode) ? mode : "freecam";
     // Entering follow mode should place the camera, not swing it over from
     // wherever the previous mode parked it.
@@ -1427,7 +1566,8 @@ export const createPlayer = ({
         );
       }
     }
-    rivalMarker.visible = Boolean(rival) && !rivalCharacter;
+    rivalMarker.visible =
+      replayOverlaysVisible && Boolean(rival) && !rivalCharacter;
 
     updateCamera(playbackTime, delta);
     resize();
@@ -1493,6 +1633,26 @@ export const createPlayer = ({
     loadMap,
     setRival,
     setPov,
+    setReferenceView: (view) => {
+      const pose = referenceCameraPose(view);
+      if (Math.abs(view.aspect - camera.aspect) > 1e-6)
+        throw new Error("Reference aspect differs from the viewport");
+      setCameraMode("freecam");
+      playing = false;
+      freecamKeys.clear();
+      referenceVerticalFov = pose.verticalFov;
+      camera.position.fromArray(pose.position);
+      camera.lookAt(...pose.target);
+      freecamEuler.setFromQuaternion(camera.quaternion, "YXZ");
+      setFov(referenceVerticalFov);
+    },
+    setReplayOverlaysVisible: (visible) => {
+      replayOverlaysVisible = Boolean(visible);
+      trail.visible = replayOverlaysVisible;
+      rivalGroup.visible = replayOverlaysVisible;
+      for (const dot of endpointDots) dot.visible = replayOverlaysVisible;
+      if (teleportMarkers) teleportMarkers.visible = replayOverlaysVisible;
+    },
     tickRate: track.tickRate,
     tickCount: track.count,
     /**
@@ -1592,6 +1752,7 @@ export const createPlayer = ({
       THREE,
       scene,
       renderer,
+      camera,
       mapGroup,
       track,
       positionAt,
@@ -1615,6 +1776,16 @@ export const createPlayer = ({
           : { min: mapBox.min.toArray(), max: mapBox.max.toArray() },
         runBox: { min: bounds.min.toArray(), max: bounds.max.toArray() },
         cameraPosition: camera.position.toArray(),
+        cameraQuaternion: camera.quaternion.toArray(),
+        verticalFov: camera.fov,
+        aspect: camera.aspect,
+        drawingBuffer: [renderer.domElement.width, renderer.domElement.height],
+        exposure: renderer.toneMappingExposure,
+        assetRevision:
+          loadedAssets?.manifest?.activeRevision ??
+          loadedAssets?.manifest?.revision ??
+          null,
+        mapLoadTimings: { ...mapLoadTimings },
         cameraFar: camera.far,
         fog: scene.fog && { near: scene.fog.near, far: scene.fog.far },
       };

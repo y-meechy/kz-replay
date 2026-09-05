@@ -220,7 +220,9 @@ const commands = {
       );
     }
 
-    const map = await fetchMap(mapName);
+    const map = flags["workshop-id"]
+      ? { name: mapName, workshop_id: flags["workshop-id"] }
+      : await fetchMap(mapName);
     if (!map?.workshop_id) {
       throw new Error(`no workshop id for ${mapName} in the CS2KZ API`);
     }
@@ -238,6 +240,11 @@ const commands = {
       toolsDir: TOOLS_DIR,
       outputDir: MAPS_DIR,
       steamcmd: flags.steamcmd ?? "steamcmd",
+      workshopDir: flags["workshop-dir"] ?? null,
+      profile: flags.profile ?? "fidelity",
+      textureCompression: flags["texture-compression"] ?? "uastc",
+      exporterLightmapUvs: flags["exporter-lightmap-uvs"] ?? "auto",
+      cleanup: !flags["keep-work"],
       // The mapper's own materials and textures, which the workshop item carries.
       // On by default; --no-textures falls back to the map's baked lighting over
       // colours guessed from material names.

@@ -17,7 +17,6 @@ import {
   mkdir,
   copyFile,
   open,
-  rename,
   rm,
   readdir,
   stat,
@@ -26,12 +25,24 @@ import {
 import { existsSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import sharp from "sharp";
 import { trimMap } from "./trimMap.js";
+import {
+  readMapEnvironment,
+  VRF_19_2_REVISION,
+  VRF_RENDER_REFERENCE,
+} from "./mapEnvironment.js";
+import {
+  fingerprintFile,
+  MAP_PIPELINE_VERSION,
+  publishMapAssets,
+} from "./mapAssets.js";
+import { qualityReductions, resolveMapQuality } from "./mapQuality.js";
 import { buildLightmap } from "./mapLightmap.js";
+import { createSourceTextureReader } from "./sourceMaterialRepair.js";
 import { readMaterialNames } from "./mapMaterialNames.js";
 import { buildSky, readSkyName } from "./mapSky.js";
 import { borrowCs2Materials } from "./cs2Materials.js";
+import { prepareCs2Shaders } from "./cs2Shaders.js";
 import {
   cs2GameInfoPath,
   ensureCs2Assets,
@@ -97,8 +108,8 @@ const containedPath = (root, ...parts) => {
  * WebP over KTX2: every browser decodes it natively, where KTX2 needs a transcoder
  * shipped alongside the viewer. VRAM suffers, download does not.
  */
-const textureCompressArgs = ({ withTextures, bakeLighting, textureSize }) => {
-  if (withTextures) {
+const textureCompressArgs = ({ withTextures, textureSize }) => {
+  if (withTextures && textureSize) {
     return [
       "--texture-compress",
       "webp",
@@ -106,12 +117,8 @@ const textureCompressArgs = ({ withTextures, bakeLighting, textureSize }) => {
       String(textureSize),
     ];
   }
-  if (bakeLighting) {
-    // The atlas was resized on the way in, so only the encoding is left to do. WebP
-    // takes the baked lighting from 1.4 MB of PNG to about 150 KB.
-    return ["--texture-compress", "webp"];
-  }
-  // A colour-only or grey map carries no image at all.
+  // Fidelity builds preserve source texture encodings and dimensions. A caller who
+  // supplies textureSize has explicitly selected WebP/downscaling above.
   return ["--texture-compress", "false"];
 };
 
@@ -201,6 +208,10 @@ export const convertMap = async ({
   toolsDir,
   outputDir,
   steamcmd = "steamcmd",
+  // Reuse an explicitly supplied Workshop item directory for reproducible offline builds.
+  workshopDir = null,
+  textureCompression = "uastc",
+  exporterLightmapUvs = "auto",
   // Rough ceiling for a file a browser should download. Not a hard limit: a map
   // that cannot get under it is still shipped, with a note.
   //
@@ -211,7 +222,8 @@ export const convertMap = async ({
   budgetBytes = 15_000_000,
   // Leaves and branches are millions of triangles a player runs straight through.
   // Turn this off if a map uses plants as climbable props.
-  dropFoliage = true,
+  profile = "fidelity",
+  dropFoliage,
   // Export the map's own materials and textures, which the workshop item carries and
   // which are the closest thing to what a player actually sees. On by default; it
   // roughly doubles the conversion time, because every material and image has to be
@@ -229,7 +241,7 @@ export const convertMap = async ({
   // only thing between a 4096² source and a browser download: 4096 is 24 MB, 1024 is
   // about 150 KB, 512 about 70 KB and starts to bleed light across the seams
   // between one surface's patch of the atlas and the next.
-  lightmapSize = 1024,
+  lightmapSize,
   // Write the map's real sky beside the .glb, as `<map>.sky.webp`. The map names it and
   // CS2 holds it, so this is the one step that needs anything from the game — one
   // archive part per distinct sky, cached under CS2_DIR. See mapSky.js.
@@ -244,7 +256,10 @@ export const convertMap = async ({
   // 3.0 MB and 512 is 4.2 MB, because the cost is the vertex streams a texture needs
   // and not the images. 256 is where the mortar lines in a brick wall start reading;
   // 512 is the first step that costs real megabytes on a big map.
-  textureSize = 256,
+  textureSize,
+  // Geometry simplification is never selected in response to output byte size.
+  // Supplying a numeric error is an explicit, recorded fidelity reduction.
+  simplifyError = null,
   // Delete the workshop download and the intermediate exports afterwards. One map
   // can be half a gigabyte of vpk plus a 250 MB raw glb, so converting all 85 of
   // them without this needs tens of gigabytes that are never read again.
@@ -256,8 +271,14 @@ export const convertMap = async ({
   // files, but the viewer only ever looks for `<map>.glb`, so the flag produced a file
   // nothing could load.
   validateMapConversionInput({ mapName, workshopId });
+  const quality = resolveMapQuality({
+    profile,
+    dropFoliage,
+    textureSize,
+    lightmapSize,
+    simplifyError,
+  });
 
-  let temporaryOutput = null;
   try {
     await mkdir(outputDir, { recursive: true });
     await cleanupTemporaryGlb(outputDir, mapName);
@@ -272,6 +293,25 @@ export const convertMap = async ({
       "gltf-transform",
       "Run npm install before converting maps.",
     );
+    const [extractorFingerprint, optimizerFingerprint] = await Promise.all([
+      fingerprintFile(cli),
+      fingerprintFile(optimizer),
+    ]);
+    const textureEncoder =
+      process.env.KTX_TOKTX ??
+      join(toolsDir, "KTX-Software-4.4.2-Linux-x86_64", "bin", "toktx");
+    if (!["uastc", "source"].includes(textureCompression))
+      throw new Error("textureCompression must be uastc or source");
+    if (withTextures && textureCompression === "uastc")
+      requireTool(
+        textureEncoder,
+        "toktx",
+        "Install pinned KTX-Software 4.4.2 under tools; see docs/fidelity-capture.md.",
+      );
+    const textureEncoderFingerprint =
+      withTextures && textureCompression === "uastc"
+        ? await fingerprintFile(textureEncoder)
+        : null;
 
     const workDir = containedPath(toolsDir, "work");
     const steamRoot = containedPath(toolsDir, "steam-workshop");
@@ -279,16 +319,17 @@ export const convertMap = async ({
 
     // 1 + 2. Download the workshop item.
     log(`downloading workshop item ${workshopId} (anonymous)…`);
-    await run(steamcmd, [
-      "+force_install_dir",
-      steamRoot,
-      "+login",
-      "anonymous",
-      "+workshop_download_item",
-      STEAMCMD_APP_ID,
-      workshopId,
-      "+quit",
-    ]);
+    if (!workshopDir)
+      await run(steamcmd, [
+        "+force_install_dir",
+        steamRoot,
+        "+login",
+        "anonymous",
+        "+workshop_download_item",
+        STEAMCMD_APP_ID,
+        workshopId,
+        "+quit",
+      ]);
 
     // steamcmd resolves force_install_dir against its own prefix, so find the item
     // rather than assuming where it landed.
@@ -296,7 +337,9 @@ export const convertMap = async ({
       workshopContentDir(steamRoot, workshopId),
       workshopContentDir(steamRoot.toLowerCase(), workshopId),
     ];
-    const itemDir = candidates.find((dir) => existsSync(dir));
+    const itemDir = workshopDir
+      ? resolve(workshopDir)
+      : candidates.find((dir) => existsSync(dir));
     if (!itemDir) {
       throw new Error(
         `steamcmd reported success but no content directory was found. Looked in:\n  ${candidates.join("\n  ")}`,
@@ -338,6 +381,7 @@ export const convertMap = async ({
     const contentRoot = containedPath(workDir, "content", mapName);
     const gameDir = containedPath(contentRoot, "game", "csgo");
     let innerVpk;
+    let shaderMetadata = null;
     if (withTextures) {
       log("extracting the workshop item's maps, materials and models…");
       await rm(contentRoot, { recursive: true, force: true });
@@ -351,6 +395,15 @@ export const convertMap = async ({
         cs2GameInfoPath(cs2Dir),
         containedPath(gameDir, "gameinfo.gi"),
       );
+      shaderMetadata = await prepareCs2Shaders({
+        cs2Dir,
+        toolsDir,
+        gameDir,
+        log,
+      }).catch((error) => {
+        log(`compiled shader metadata unavailable: ${error.message}`);
+        return { unavailable: error.message };
+      });
       innerVpk = containedPath(gameDir, "maps", `${mapName}.vpk`);
     } else {
       log("extracting the inner map vpk…");
@@ -369,6 +422,31 @@ export const convertMap = async ({
         `expected maps/${mapName}.vpk inside the workshop item. The map may be published under a different internal name.`,
       );
     }
+    const environment = await readMapEnvironment({
+      cli,
+      mapVpk: innerVpk,
+      mapName,
+      workDir,
+    });
+    const { stdout: extractorVersion } = await run(cli, ["--version"]);
+    if (!["auto", "source", "baked"].includes(exporterLightmapUvs))
+      throw new Error("exporterLightmapUvs must be auto, source, or baked");
+    const knownSource = extractorVersion.includes(VRF_19_2_REVISION);
+    const knownBaked = extractorVersion.includes(VRF_RENDER_REFERENCE);
+    if (
+      exporterLightmapUvs === "auto" &&
+      !knownSource &&
+      !knownBaked &&
+      environment.lightmapUvScale.some((v) => v !== 1)
+    ) {
+      throw new Error(
+        "Unverified exporter lightmap UV convention. Use pinned Source2Viewer 19.2 or verify --exporter-lightmap-uvs source|baked against upstream.",
+      );
+    }
+    const exporterBakesUvScale =
+      exporterLightmapUvs === "baked" ||
+      (exporterLightmapUvs === "auto" && !knownSource);
+    const sourceFingerprint = await fingerprintFile(innerVpk);
 
     // 3b. Which material every surface was built with.
     //
@@ -461,18 +539,21 @@ export const convertMap = async ({
       if (!skyName) {
         log("the map names no sky, so the viewer keeps its gradient");
       } else {
-        const { missing } = await ensureCs2Assets({
-          cs2Dir,
-          toolsDir,
-          cli,
-          paths: [skyName],
-          log,
-        });
+        const { missing } = existsSync(join(gameDir, `${skyName}_c`))
+          ? { missing: [] }
+          : await ensureCs2Assets({
+              cs2Dir,
+              toolsDir,
+              cli,
+              paths: [skyName],
+              log,
+            });
         if (missing.length) {
           log(`CS2 has no ${skyName}, so the viewer keeps its gradient`);
         } else {
           sky = await buildSky({
             cli,
+            gameDir,
             cs2Dir,
             skyName,
             workDir,
@@ -483,10 +564,8 @@ export const convertMap = async ({
       }
     }
 
-    // 4. Throw away what the viewer cannot show: unused vertex attributes, and
-    // foliage. This is where nearly all of the size goes — on kz_moss it is 251 MB
-    // down to 3 MB, because 95% of the triangles in that map are leaves — and unlike
-    // simplification it does not move a single vertex.
+    // 4. Preserve the exporter's visual streams and scenery by default. The named
+    // legacy profile can reproduce the old reductions, and records each one.
     //
     // Textures and baked lighting are a pair, not alternatives: the mapper's own
     // surfaces, lit by the mapper's own sun. They address different things — one UV set
@@ -502,24 +581,37 @@ export const convertMap = async ({
         mapVpk: innerVpk,
         mapName,
         workDir,
-        size: lightmapSize,
+        size: quality.lightmapSize,
         log,
       });
     }
 
-    log("trimming attributes and foliage…");
+    log(
+      quality.profile === "fidelity"
+        ? "preparing geometry without visual-data reduction…"
+        : "applying explicit legacy reductions…",
+    );
     const trimmed = containedPath(exportDir, "world.trimmed.glb");
     const trim = await trimMap({
       input: raw,
       output: trimmed,
-      dropFoliage,
+      dropFoliage: quality.dropFoliage,
+      attributePolicy: quality.attributePolicy,
+      preserveMorphTargets: quality.preserveMorphTargets,
       withTextures,
       materialNames,
       lightmap,
+      lightmapUvScale: exporterBakesUvScale
+        ? [1, 1]
+        : environment.lightmapUvScale,
+      readSourceTexture: createSourceTextureReader({ cli, gameDir, workDir }),
     });
     log(
-      `dropped ${trim.meshesRemoved} foliage meshes (${((trim.trianglesRemoved / Math.max(trim.trianglesBefore, 1)) * 100).toFixed(0)}% of triangles) ` +
-        `and ${trim.attributesDropped.length} unused attribute streams`,
+      `retained ${trim.meshesRetained}/${trim.meshesBefore} meshes and ` +
+        `${trim.attributesRetained.length} vertex attribute semantic(s)` +
+        (trim.meshesRemoved || trim.attributesDropped.length
+          ? `; explicitly dropped ${trim.meshesRemoved} mesh(es) and ${trim.attributesDropped.length} semantic(s)`
+          : ""),
     );
     if (trim.texturesFilledIn?.length) {
       log(
@@ -549,125 +641,245 @@ export const convertMap = async ({
           `${surfaces - matched} left default grey`,
       );
     }
-    const packInput = existsSync(trimmed) ? trimmed : raw;
+    let packInput = existsSync(trimmed) ? trimmed : raw;
 
-    // 5. Shrink, escalating only as far as needed.
-    //
-    // Map sizes vary enormously: kz_victoria exports at 27 MB, kz_moss at 251 MB.
-    // Lossless packing alone leaves the big ones far too heavy for a browser, and
-    // mesh simplification moves vertices, so it is worth avoiding when it is not
-    // needed. Each attempt is therefore tried in order and the first one inside the
-    // budget wins, which means small maps keep their exact geometry.
+    // 5. Pack once using the selected policy. File size is telemetry, never an input
+    // to geometry quality; simplification only runs when explicitly requested.
     log("compressing…");
-    const attempts = [
-      { label: "lossless", simplifyError: null },
-      { label: "light simplification", simplifyError: 0.001 },
-      { label: "harder simplification", simplifyError: 0.004 },
-    ];
-
-    const textures = textureCompressArgs({
-      withTextures,
-      bakeLighting: withLightmap,
-      textureSize,
-    });
-
-    let best = null;
-    for (const [index, attempt] of attempts.entries()) {
-      const candidate = containedPath(exportDir, `world.opt${index}.glb`);
+    if (withTextures && textureCompression === "uastc") {
+      const texturePacked = containedPath(exportDir, "world.textures.glb");
+      // Texture transforms decode EXT_meshopt_compression on read. Run them first
+      // so the final geometry pass cannot accidentally publish unpacked buffers.
       await run(
         optimizer,
         [
-          "optimize",
+          "uastc",
           packInput,
-          candidate,
-          "--compress",
-          "meshopt",
-          ...textures,
-          // Flat colours are already the cheapest thing a material can be. Baking
-          // them into a palette texture would add an image to a file that has one
-          // already, and on a lightmapped map it would overwrite the lighting.
-          ...(withColours || withLightmap ? ["--palette", "false"] : []),
-          // Keep the lighting atlas's UVs. The optimizer prunes a vertex attribute
-          // nothing in the file references, and nothing in the file does reference
-          // this one: the atlas ships beside the .glb, because glTF has no light map
-          // slot, and the viewer pairs the two up at load time. So the optimizer threw
-          // away every map's baked lighting on the way out, which is why a textured
-          // map arrived lit only by the viewer's own invented lights — flat, and far
-          // darker than the same map in the game. Nothing else is kept by this: the
-          // trim pass has already dropped every attribute that really is unused.
-          "--prune-attributes",
-          "false",
-          // Do not weld the map into one shape. Joining every mesh that shares a
-          // material sounds like a saving and is the opposite: the result is a
-          // handful of shapes that each span the whole map, so nothing is ever off
-          // screen and the whole level is drawn every frame. Keeping the exporter's
-          // split (median mesh spans 0.7% of the map) lets the renderer throw away
-          // what is behind the camera: on kz_victoria, 253k triangles a frame became
-          // 76k, for 13 draw calls becoming 119 and 0.84 MB becoming 1.24 MB.
-          "--join",
-          "false",
-          "--simplify",
-          attempt.simplifyError === null ? "false" : "true",
-          ...(attempt.simplifyError === null
-            ? []
-            : ["--simplify-error", String(attempt.simplifyError)]),
+          texturePacked,
+          "--level",
+          "2",
+          "--zstd",
+          "18",
+          "--jobs",
+          "2",
         ],
-        BIG_OUTPUT,
+        {
+          ...BIG_OUTPUT,
+          env: {
+            ...process.env,
+            PATH: `${dirname(textureEncoder)}:${process.env.PATH}`,
+          },
+        },
       );
+      packInput = texturePacked;
+    }
+    const textures = textureCompressArgs({
+      withTextures,
+      textureSize: quality.textureSize,
+    });
+    const candidate = containedPath(exportDir, "world.optimized.glb");
+    await run(
+      optimizer,
+      [
+        "optimize",
+        packInput,
+        candidate,
+        "--compress",
+        "meshopt",
+        ...textures,
+        "--texture-size",
+        String(quality.textureSize ?? 16384),
+        // Flat colours are already the cheapest thing a material can be. Baking
+        // them into a palette texture would add an image to a file that has one
+        // already, and on a lightmapped map it would overwrite the lighting.
+        ...(withColours || withLightmap ? ["--palette", "false"] : []),
+        // Keep the lighting atlas's UVs. The optimizer prunes a vertex attribute
+        // nothing in the file references, and nothing in the file does reference
+        // this one: the atlas ships beside the .glb, because glTF has no light map
+        // slot, and the viewer pairs the two up at load time. So the optimizer threw
+        // away every map's baked lighting on the way out, which is why a textured
+        // map arrived lit only by the viewer's own invented lights — flat, and far
+        // darker than the same map in the game. Nothing else is kept by this: the
+        // trim pass has already dropped every attribute that really is unused.
+        "--prune-attributes",
+        "false",
+        // Do not weld the map into one shape. Joining every mesh that shares a
+        // material sounds like a saving and is the opposite: the result is a
+        // handful of shapes that each span the whole map, so nothing is ever off
+        // screen and the whole level is drawn every frame. Keeping the exporter's
+        // split (median mesh spans 0.7% of the map) lets the renderer throw away
+        // what is behind the camera: on kz_victoria, 253k triangles a frame became
+        // 76k, for 13 draw calls becoming 119 and 0.84 MB becoming 1.24 MB.
+        "--join",
+        "false",
+        "--simplify",
+        quality.simplifyError === null ? "false" : "true",
+        ...(quality.simplifyError === null
+          ? []
+          : ["--simplify-error", String(quality.simplifyError)]),
+      ],
+      BIG_OUTPUT,
+    );
 
-      if (!existsSync(candidate)) continue;
-      const { size } = await stat(candidate);
-      best = { path: candidate, size, ...attempt };
-      log(`${attempt.label}: ${(size / 1e6).toFixed(1)} MB`);
-      if (size <= budgetBytes) break;
+    let packed = null;
+    const packedPath = candidate;
+    if (existsSync(packedPath)) {
+      const { size } = await stat(packedPath);
+      packed = { path: packedPath, size };
+      log(
+        `${quality.simplifyError === null ? "geometry preserved" : `explicit simplify ${quality.simplifyError}`}, textures ${textureCompression}: ${(size / 1e6).toFixed(1)} MB`,
+      );
     }
 
-    if (!best) {
+    if (!packed) {
       // Exit code said success but nothing was written. Shipping the raw export is
       // better than failing, but it is far larger, so say so.
+      if (quality.profile === "fidelity")
+        throw new Error(
+          "Compression produced no file; refusing to publish an unverified fallback",
+        );
       log("compression produced no file — shipping the uncompressed export");
-    } else if (best.size > budgetBytes) {
+    } else if (packed.size > budgetBytes) {
       log(
-        `still ${(best.size / 1e6).toFixed(1)} MB, over the ${(budgetBytes / 1e6).toFixed(0)} MB budget — shipping it anyway`,
+        `${(packed.size / 1e6).toFixed(1)} MB is over the ${(budgetBytes / 1e6).toFixed(0)} MB advisory budget; fidelity settings are unchanged`,
       );
     }
+    const geometry = packed?.path ?? raw;
+    await validateGlb(geometry);
 
-    const final = containedPath(outputDir, `${mapName}.glb`);
-    temporaryOutput = temporaryGlbPath(outputDir, mapName);
-    await copyFile(best?.path ?? raw, temporaryOutput);
-    await validateGlb(temporaryOutput);
-    await rename(temporaryOutput, final);
-    temporaryOutput = null;
-
-    // After the .glb, so a half-written conversion never leaves a sky with no map to
-    // put it behind. The viewer treats a missing one as "no sky for this map".
-    // The baked lighting, when the .glb could not carry it. Same reasoning as the sky:
-    // a sibling file, and the viewer treating a missing one as "not lit".
-    const lightPath = containedPath(outputDir, `${mapName}.light.webp`);
-    // Only when it reaches something. A map can have a lightmap set and no surface that
-    // addresses it — kz_dojo's reaches none of its 205 — and shipping 200 KB of atlas
-    // that nothing can look up is both waste and a trap: the viewer used to attach it to
-    // every textured material, including geometry with no atlas UV to look it up with,
-    // and three.js throws out of the render loop when asked to draw that.
-    if (lightmap && withTextures && trim.lightmap?.lit > 0) {
-      await writeFile(
-        lightPath,
-        await sharp(lightmap.png).webp({ quality: 85 }).toBuffer(),
-      );
-    } else if (withLightmap) {
-      await rm(lightPath, { force: true });
+    const lightSource = containedPath(exportDir, "light.rgbm.png");
+    const shadowSource = containedPath(exportDir, "light.shadows.png");
+    const skySource = containedPath(
+      exportDir,
+      sky?.exr ? "sky.exr" : "sky.webp",
+    );
+    if (lightmap?.irradiance && trim.lightmap?.lit > 0) {
+      await writeFile(lightSource, lightmap.irradiance.png);
     }
+    if (lightmap?.shadows) await writeFile(shadowSource, lightmap.shadows.png);
+    if (sky?.exr) await writeFile(skySource, sky.exr);
+    else if (sky?.webp) await writeFile(skySource, sky.webp);
 
-    const skyPath = containedPath(outputDir, `${mapName}.sky.webp`);
-    if (sky) {
-      await writeFile(skyPath, sky.webp);
-    } else if (withSky) {
-      // A reconversion that looked for a sky and stopped finding one must not leave the
-      // old one behind. Guarded on withSky, though: without that, a `--no-sky` build or
-      // any caller that simply does not ask for a sky deletes the one already there,
-      // and every nightly refresh would quietly strip the skies off every map.
-      await rm(skyPath, { force: true });
-    }
+    const published = await publishMapAssets({
+      outputDir,
+      mapName,
+      source: {
+        workshopId,
+        mapVpk: sourceFingerprint,
+        compiledShaders: shaderMetadata,
+      },
+      converter: {
+        pipelineVersion: MAP_PIPELINE_VERSION,
+        profile: quality.profile,
+        settings: {
+          ...quality,
+          textureCompression,
+          environment,
+          exporterBakesUvScale,
+          extractorVersion: extractorVersion.trim(),
+          withTextures,
+          withColours,
+          withLightmap,
+          withSky,
+        },
+        tools: {
+          source2Viewer: extractorFingerprint,
+          gltfTransform: optimizerFingerprint,
+          textureEncoder: textureEncoderFingerprint,
+        },
+      },
+      files: {
+        geometry: {
+          sourcePath: geometry,
+          fileName: `${mapName}.glb`,
+          metadata: {
+            mediaType: "model/gltf-binary",
+            encoding:
+              withTextures && textureCompression === "uastc"
+                ? "glb+meshopt+ktx2-uastc"
+                : "glb+meshopt",
+          },
+        },
+        lightmapIrradiance:
+          lightmap?.irradiance && trim.lightmap?.lit > 0
+            ? {
+                sourcePath: lightSource,
+                fileName: `${mapName}.light.rgbm.png`,
+                metadata: {
+                  mediaType: "image/png",
+                  encoding: "rgbm8-linear",
+                  colorSpace: "linear",
+                  range: lightmap.irradiance.range,
+                  width: lightmap.irradiance.width,
+                  height: lightmap.irradiance.height,
+                },
+              }
+            : null,
+        lightmapShadows: lightmap?.shadows
+          ? {
+              sourcePath: shadowSource,
+              fileName: `${mapName}.light.shadows.png`,
+              metadata: {
+                mediaType: "image/png",
+                encoding: "rgba8-shadow-amount",
+                colorSpace: "linear",
+                channels: "rgba",
+                width: lightmap.shadows.width,
+                height: lightmap.shadows.height,
+              },
+            }
+          : null,
+        sky: sky
+          ? {
+              sourcePath: skySource,
+              fileName: `${mapName}.sky.${sky.exr ? "exr" : "webp"}`,
+              metadata: sky.exr
+                ? {
+                    mediaType: "image/x-exr",
+                    encoding: sky.encoding ?? "exr-linear",
+                    projection: sky.projection ?? "vrf-latlong",
+                    width: sky.width,
+                    height: sky.height,
+                    material: sky.material ?? null,
+                  }
+                : {
+                    mediaType: "image/webp",
+                    encoding: "srgb8-tonemapped",
+                    projection: "equirectangular",
+                    width: sky.width,
+                    height: sky.height,
+                  },
+            }
+          : null,
+      },
+      audit: {
+        retained: {
+          geometry: {
+            meshes: trim.meshesRetained,
+            triangles: trim.trianglesRetained,
+            attributes: trim.attributesRetained,
+            morphTargets: quality.preserveMorphTargets,
+          },
+          materials: {
+            preserved: withTextures,
+            ...trim.materials,
+          },
+          scenery: !quality.dropFoliage,
+          directShadowChannels: lightmap?.shadows ? 4 : 0,
+        },
+        dropped: qualityReductions(quality),
+        trim,
+        fallbacks: {
+          missingTexturesFilledNeutral: trim.texturesFilledIn,
+          untexturedMaterials: trim.untexturedMaterials,
+          untexturedSurfaces: trim.untexturedSurfaces,
+        },
+      },
+    });
+    const final = published.paths.geometry;
+    const lightPath = published.paths.lightmapIrradiance;
+    const shadowPath = published.paths.lightmapShadows;
+    const skyPath = published.paths.sky;
 
     if (cleanup) {
       // Both are reproducible from the workshop id, and both are enormous. The final
@@ -679,11 +891,14 @@ export const convertMap = async ({
 
     return {
       path: final,
-      lightPath: lightmap && withTextures ? lightPath : null,
-      skyPath: sky ? skyPath : null,
+      manifestPath: published.manifestPath,
+      revision: published.revision,
+      lightPath,
+      shadowPath,
+      skyPath,
       sun: sky?.sun ?? null,
       rawPath: cleanup ? null : raw,
-      simplifyError: best?.simplifyError ?? null,
+      simplifyError: quality.simplifyError,
     };
   } catch (error) {
     if (cleanup) {
@@ -693,11 +908,5 @@ export const convertMap = async ({
       log("cleaned up the failed conversion");
     }
     throw error;
-  } finally {
-    if (temporaryOutput) {
-      await rm(temporaryOutput, { force: true }).catch((cleanupError) =>
-        log(`temporary output cleanup failed: ${cleanupError.message}`),
-      );
-    }
   }
 };
