@@ -24,27 +24,13 @@ import * as THREE from "three";
 // pose. This is the addon that rebuilds the bindings.
 import { clone as cloneSkinned } from "three/addons/utils/SkeletonUtils.js";
 import { disposeGlb, loadGlb } from "./glbAsset.js";
+import { applyCharacterLighting } from "./characterLighting.js";
 import {
   VRF_UNITS_PER_EXPORTED_METRE,
   VRF_YAW_CORRECTION,
 } from "./vrfExport.js";
 
 export const CHARACTER_URL = "models/ct.glb";
-
-/**
- * The layer the bodies are on as well as the default one, so a light can reach them and
- * nothing else.
- *
- * Needed because the scene's four invented lights are turned down to a third whenever a
- * map brings its own baked lighting (see player.js), and the character has no baked
- * lighting to make up the difference — so on exactly the maps that look best, the runner
- * came out as a black silhouette. A light set to this layer illuminates the bodies without
- * touching the map, and the character then looks the same on every map, lit or not.
- *
- * three.js lights an object when the light's layer mask and the object's overlap, and the
- * bodies keep layer 0 as well, so they still take the scene's own lights on top.
- */
-export const CHARACTER_LAYER = 1;
 
 /**
  * Below this, a player is standing still rather than walking.
@@ -175,8 +161,8 @@ export const createCharacter = ({ asset, tint = null, stance = "pistol" }) => {
     // shadow nothing, so backface culling on a one-sided export leaves gaps at the
     // cuffs and collar. Cheap to keep both sides on a 12k-triangle mesh.
     child.frustumCulled = false;
-    child.layers.enable(CHARACTER_LAYER);
     const clone = child.material.clone();
+    applyCharacterLighting(clone);
 
     // A metal surface has no diffuse response: all it can show is what it reflects, and
     // this scene has three lights and no environment to reflect. So the export's own
