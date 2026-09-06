@@ -11,14 +11,18 @@ import {
 } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { fetchRangesInto, readDepotAccess } from "./cs2Chunks.js";
-import { readManifestFiles } from "./cs2Manifest.js";
 import { fingerprintFile } from "./mapAssets.js";
-
-const CS2_CONTENT_DEPOT = "2347770";
+import {
+  CS2_CONTENT_DEPOT,
+  CS2_CONTENT_MANIFEST_GID,
+  readPinnedContentManifest,
+  verifyPinnedContentIndex,
+  chunkOccurrenceBatches,
+} from "./cs2ContentManifest.js";
 
 // Shader archives must match the content used while this conversion path was built.
 // Selecting the newest cached manifest would silently change inputs after a CS2 update.
-export const CS2_SHADER_MANIFEST_GID = "7673916425787288234";
+export const CS2_SHADER_MANIFEST_GID = CS2_CONTENT_MANIFEST_GID;
 
 const COMPLETION_SCHEMA_VERSION = 2;
 const COMPLETION_FILE = "complete.json";
@@ -42,17 +46,7 @@ const archiveDescriptor = async (cache, name) => ({
 // contain that content at multiple offsets, though, and every offset must be written.
 // Put each occurrence of a repeated hash in a separate fetch so the helper's transfer
 // de-duplication cannot turn later occurrences into holes.
-const chunkBatches = (chunks) => {
-  const occurrences = new Map();
-  const batches = [];
-  for (const chunk of chunks) {
-    const occurrence = occurrences.get(chunk.sha) ?? 0;
-    occurrences.set(chunk.sha, occurrence + 1);
-    if (!batches[occurrence]) batches[occurrence] = [];
-    batches[occurrence].push(chunk);
-  }
-  return batches;
-};
+const chunkBatches = chunkOccurrenceBatches;
 
 const validatedChunks = (name, entry) => {
   if (!Number.isSafeInteger(entry?.size) || entry.size <= 0) {
@@ -235,19 +229,8 @@ export const prepareCs2Shaders = async ({
   gameDir,
   log = () => {},
 }) => {
-  const manifestPath = join(
-    cs2Dir,
-    ".DepotDownloader",
-    `${CS2_CONTENT_DEPOT}_${CS2_SHADER_MANIFEST_GID}.manifest`,
-  );
-  try {
-    await stat(manifestPath);
-  } catch {
-    throw new Error(
-      `Shader metadata requires pinned CS2 depot manifest ${CS2_SHADER_MANIFEST_GID}`,
-    );
-  }
-  const files = await readManifestFiles(manifestPath);
+  const files = await readPinnedContentManifest(cs2Dir);
+  const content = await verifyPinnedContentIndex(cs2Dir, files);
   const names = shaderArchiveNames(files);
   if (!names.some((name) => name === "game/csgo/shaders_vulkan_dir.vpk"))
     throw new Error("Pinned depot has no CS2 Vulkan shader archive");
@@ -286,6 +269,7 @@ export const prepareCs2Shaders = async ({
   return {
     depot: CS2_CONTENT_DEPOT,
     manifest: CS2_SHADER_MANIFEST_GID,
+    contentIndexSha256: content.indexSha256,
     archives,
   };
 };

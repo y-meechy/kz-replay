@@ -1,7 +1,7 @@
 # Draft PR description
 
-> Draft only. This PR has not been published; GitHub writes are blocked by the
-> current approval policy.
+> Draft checkpoint. Actual CS2-reference and hardware-GPU acceptance checks remain
+> pending.
 
 ## Summary
 
@@ -21,6 +21,8 @@ implementation checkpoint, not a claim of 1:1 CS2 parity or production readiness
   versioned lighting contracts, and renderer checks. Preserve supported native BC6H
   irradiance and authored mips, with a full-resolution RGBM fallback; correct the
   EXR atlas row reversal. Retrieve and hash-verify pinned compiled shader archives.
+- Pin shared content and shader acquisition to the same depot manifest, verify cached
+  index/archive chunks, and reject mixed-version inputs before export.
 - Publish map outputs as immutable, versioned bundles with a manifest switched last;
   failed or mixed-generation sidecars cannot silently be combined. Existing legacy
   assets/revisions are preserved. Maps need reconversion to receive the new data.
@@ -32,9 +34,9 @@ implementation checkpoint, not a claim of 1:1 CS2 parity or production readiness
 
 The following are diagnostic regression captures, not CS2 reference comparisons:
 
-- [Before: opaque foliage cards](grotto-opacity-before.png)
-- [After: restored source cutout masks](grotto-opacity-after.png)
-- [Opacity regression notes and capture metadata](opacity-regression.md)
+- [Before: opaque foliage cards](https://github.com/y-meechy/kz-replay/blob/fidelity/source2-assets-and-measurement/docs/fidelity/grotto-opacity-before.png)
+- [After: restored source cutout masks](https://github.com/y-meechy/kz-replay/blob/fidelity/source2-assets-and-measurement/docs/fidelity/grotto-opacity-after.png)
+- [Opacity regression notes and capture metadata](https://github.com/y-meechy/kz-replay/blob/fidelity/source2-assets-and-measurement/docs/fidelity/opacity-regression.md)
 
 The paired captures use 1280×720 DPR1, Chrome/SwiftShader, the same first-person
 camera at 12 seconds, and overlays disabled. The foliage ROI changes as expected;
@@ -59,13 +61,15 @@ reports.
 The paired replay-time arrays match exactly, but these software-rendered runs show no
 convincing performance change beyond run-to-run variation. Median draw calls are 180
 on both sides. This is an isolated diagnostic, not whole-branch or hardware-GPU
-parity evidence. See the [before raw report](performance-opacity-before.json) and
-[after raw report](performance-opacity-after.json).
+parity evidence. See the [before raw report](https://github.com/y-meechy/kz-replay/blob/fidelity/source2-assets-and-measurement/docs/fidelity/performance-opacity-before.json) and
+[after raw report](https://github.com/y-meechy/kz-replay/blob/fidelity/source2-assets-and-measurement/docs/fidelity/performance-opacity-after.json).
 
 ## Verification status
 
-- Current local checkpoint: 67 unit tests, production build and Prettier pass.
-- [Native HDR validation](native-hdr.md): independent CPU/GPU decoding agrees at
+- Current local checkpoint: 74 unit tests pass, including mixed-manifest rejection,
+  sparse-cache validation and duplicate chunk-offset regression tests. Production
+  build and Prettier pass.
+- [Native HDR validation](https://github.com/y-meechy/kz-replay/blob/fidelity/source2-assets-and-measurement/docs/fidelity/native-hdr.md): independent CPU/GPU decoding agrees at
   512 sample positions, including bilinear/trilinear and authored mip checks.
   Atlas block storage is 83.89 MB versus the RGBM fallback's 268.44 MB base level;
   these are storage counts, not whole-scene GPU-memory or FPS measurements.
@@ -80,8 +84,9 @@ parity evidence. See the [before raw report](performance-opacity-before.json) an
 - Shader archive acquisition now succeeds: 10 pinned archives, 654 verified chunk
   mappings, zero SHA-1 mismatches; hash-verified offline reuse also passes.
   Their effect on exported materials still needs a shader-aware glTF reexport.
-- Astra implemented and validated native HDR, then hit a usage limit before the
-  requested independent integration/final acceptance review. That review is pending.
+- Astra implemented and validated native HDR, then independently reviewed checkpoint
+  `7da90be`. That review identified the mixed-content/shader-version risk corrected
+  here. Final acceptance review of the complete branch remains pending.
 
 ## Merge readiness
 

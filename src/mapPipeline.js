@@ -401,6 +401,7 @@ export const convertMap = async ({
         gameDir,
         log,
       }).catch((error) => {
+        if (error.code === "CS2_CONTENT_MANIFEST_MISMATCH") throw error;
         log(`compiled shader metadata unavailable: ${error.message}`);
         return { unavailable: error.message };
       });
@@ -482,6 +483,7 @@ export const convertMap = async ({
           paths: named.paths,
           log,
         }).catch((error) => {
+          if (error.code === "CS2_CONTENT_MANIFEST_MISMATCH") throw error;
           // Swallowed like the sky: a map with flat colours on its stock surfaces is
           // still worth having, and this reaches out to Steam, so it can fail for
           // reasons that have nothing to do with the map.

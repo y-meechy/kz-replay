@@ -117,6 +117,21 @@
 - Astra hit a usage limit after native implementation/validation, before its requested
   independent review of integration and Sol's archive changes. Root continues review;
   do not label Astra's final acceptance review complete.
+- Astra subsequently resumed and independently reviewed commit `7da90be`. It found
+  a real mixed-version risk: shader acquisition is pinned, but content/index selection
+  can use a different cached depot manifest. Shared pinned-manifest acquisition and
+  chunk verification now correct that path, with seven additional regression tests.
+  Full shader-aware reconversion remains pending. No introduced blocker found in native descriptor
+  compatibility, cancellation disposal or shader units. Deferred GPU upload failure
+  recovery remains unimplemented. This bounded review is not full goal acceptance.
+- Lighting coverage still uses a material-name/UV1 heuristic. Pinned upstream instead
+  uses explicit lightmap/vertex-stream draw flags and input signatures. Audit actual
+  Grotto draw calls next; do not assume every unnamed surface is an unlit prop.
+- Publishing checkpoint requested explicitly: 74 unit tests pass. GitHub write retry
+  still fails with the session's `approval policy is never`; no remote PR created.
+  Package the committed branch as a verified Git bundle with the draft PR description
+  for publication from an authenticated checkout. Do not treat this handoff as completion
+  of the full visual/performance goal.
 
 Upstream renderer investigation is pinned to ValveResourceFormat
 `00c629d321171ad0b9be83994c5e9cb15e8c5bd9`; deployed converter is 19.2.
