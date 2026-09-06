@@ -1,7 +1,9 @@
 # Publish the fidelity checkpoint
 
-This is a draft checkpoint, not a release or a claim of CS2 parity. The current
-session cannot write to GitHub. A Git bundle preserves the exact committed branch,
+This is a draft checkpoint, not a release or a claim of CS2 parity. It is published
+as [draft PR #8](https://github.com/y-meechy/kz-replay/pull/8). The instructions below
+document the fallback prepared before GitHub CLI authentication was available;
+do not create a duplicate PR. A Git bundle preserves the exact committed branch,
 including tests, benchmark reports and diagnostic images; it excludes ignored game
 assets, credentials, dependencies and local build outputs.
 

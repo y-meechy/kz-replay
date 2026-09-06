@@ -133,6 +133,12 @@
   for publication from an authenticated checkout. Do not treat this handoff as completion
   of the full visual/performance goal.
 
+- Publication succeeded after the user authenticated GitHub CLI: branch
+  `fidelity/source2-assets-and-measurement` pushed at `66426cb`; draft PR
+  [#8](https://github.com/y-meechy/kz-replay/pull/8) created. All 74 tests passed
+  again before push. Earlier connector-policy failures no longer block publishing
+  through the authenticated CLI. The full CS2 visual/performance goal remains open.
+
 Upstream renderer investigation is pinned to ValveResourceFormat
 `00c629d321171ad0b9be83994c5e9cb15e8c5bd9`; deployed converter is 19.2.
 
