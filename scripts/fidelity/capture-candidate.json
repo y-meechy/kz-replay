@@ -1,0 +1,29 @@
+{
+  "schema": "kz-replay-fidelity-capture",
+  "schemaVersion": 1,
+  "source": "viewer",
+  "captureId": "example-viewer-candidate",
+  "map": {
+    "name": "kz_victoria",
+    "checksum": "sha256:replace-with-authoritative-map-checksum",
+    "version": "replace-with-workshop-or-build-version"
+  },
+  "reference": {
+    "source": "cs2",
+    "build": "replace-with-cs2-build-id"
+  },
+  "camera": {
+    "position": [0, 0, 0],
+    "angles": [0, 0, 0],
+    "fov": 90,
+    "fovConvention": "horizontal",
+    "aspect": 1.7777777777777777,
+    "resolution": { "width": 1920, "height": 1080 },
+    "dpr": 1
+  },
+  "graphics": {
+    "settings": {
+      "note": "Replace this example with the exact settings used for capture"
+    }
+  }
+}

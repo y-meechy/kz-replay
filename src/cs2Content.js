@@ -39,14 +39,20 @@ import {
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fetchRangesInto, readDepotAccess } from "./cs2Chunks.js";
-import { findCachedManifest, readManifestFiles } from "./cs2Manifest.js";
+import {
+  CS2_CONTENT_DEPOT,
+  CS2_CONTENT_MANIFEST_GID,
+  ContentManifestError,
+  readPinnedContentManifest,
+  verifyPinnedContentIndex,
+  verifyDepotFile,
+  chunksForRanges,
+  chunkOccurrenceBatches,
+} from "./cs2ContentManifest.js";
 
 import { runTool as run } from "./toolProcess.js";
 
 const CS2_APP_ID = "730";
-
-/** The depot holding every shared CS2 asset. The per-OS ones are binaries only. */
-const CS2_CONTENT_DEPOT = "2347770";
 
 /** Where the assets sit inside the depot, and so inside our cache. */
 const CONTENT_PREFIX = "game/csgo";
@@ -126,6 +132,8 @@ const fetchFiles = async ({ cs2Dir, toolsDir, files, log = () => {} }) => {
         CS2_APP_ID,
         "-depot",
         CS2_CONTENT_DEPOT,
+        "-manifest",
+        CS2_CONTENT_MANIFEST_GID,
         "-filelist",
         listPath,
         "-dir",
@@ -145,7 +153,10 @@ const fetchFiles = async ({ cs2Dir, toolsDir, files, log = () => {} }) => {
  * 3 MB of transfer. Everything else in this file needs it first.
  */
 export const syncCs2Index = async ({ cs2Dir, toolsDir, log = () => {} }) => {
-  if (hasCs2Index(cs2Dir)) return false;
+  if (hasCs2Index(cs2Dir)) {
+    await verifyPinnedContentIndex(cs2Dir);
+    return false;
+  }
   log("fetching the CS2 asset index (about 3 MB)…");
   await fetchFiles({
     cs2Dir,
@@ -161,6 +172,7 @@ export const syncCs2Index = async ({ cs2Dir, toolsDir, log = () => {} }) => {
       `the CS2 content depot did not yield ${INDEX_FILE} and ${GAME_INFO}`,
     );
   }
+  await verifyPinnedContentIndex(cs2Dir);
   return true;
 };
 
@@ -176,10 +188,11 @@ export const readCs2Index = async ({ cs2Dir, cli, log = () => {} }) => {
   const indexPath = cs2IndexPath(cs2Dir);
   const cachePath = join(cs2Dir, "index.json");
   const { mtimeMs } = await stat(indexPath);
+  const { manifest, indexSha256 } = await verifyPinnedContentIndex(cs2Dir);
 
   try {
     const cached = JSON.parse(await readFile(cachePath, "utf8"));
-    if (cached.mtimeMs === mtimeMs)
+    if (cached.manifest === manifest && cached.indexSha256 === indexSha256)
       return new Map(Object.entries(cached.parts));
   } catch {
     // No cache, or one written for an older CS2. Rebuild it.
@@ -206,7 +219,10 @@ export const readCs2Index = async ({ cs2Dir, cli, log = () => {} }) => {
 
   // No mkdir: the index we just read lives under cs2Dir, so the cache's directory is
   // already there.
-  await writeFile(cachePath, JSON.stringify({ mtimeMs, parts }));
+  await writeFile(
+    cachePath,
+    JSON.stringify({ mtimeMs, manifest, indexSha256, parts }),
+  );
   log(`the CS2 index lists ${Object.keys(parts).length} assets`);
   return new Map(Object.entries(parts));
 };
@@ -275,11 +291,8 @@ export const ensureCs2Assets = async ({
   // instead of the 105 MB parts they sit in — for a sky, about 2 MB instead of 105.
   // Whole parts otherwise, which always works and is what DepotDownloader can do alone.
   const access = await readDepotAccess(cs2Dir);
-  const manifest = access
-    ? await findCachedManifest(cs2Dir, CS2_CONTENT_DEPOT)
-    : null;
-  if (access && manifest) {
-    const files = await readManifestFiles(manifest.path);
+  const files = await readPinnedContentManifest(cs2Dir);
+  if (access) {
     let bytes = 0;
     const fetched = [];
     for (const part of parts) {
@@ -288,21 +301,29 @@ export const ensureCs2Assets = async ({
       if (!entry) {
         // In the index but not in the manifest: the two came from different CS2
         // versions. Re-syncing is the fix, and a whole-part fetch would be wrong too.
-        missing.push(name);
-        continue;
+        throw new ContentManifestError(
+          `index references archive absent from pinned manifest: ${name}`,
+        );
       }
-      const result = await fetchRangesInto({
-        path: join(cs2Dir, name),
-        totalSize: entry.size,
-        chunks: entry.chunks,
-        ranges: rangesByPart.get(part),
-        depotId: CS2_CONTENT_DEPOT,
-        key: access.key,
-        hosts: access.hosts,
-        log,
-      });
-      if (result.chunks) fetched.push(part);
-      bytes += result.bytes;
+      const ranges = rangesByPart.get(part);
+      const chunks = chunksForRanges(name, entry, ranges);
+      let downloaded = 0;
+      for (const batch of chunkOccurrenceBatches(chunks)) {
+        const result = await fetchRangesInto({
+          path: join(cs2Dir, name),
+          totalSize: entry.size,
+          chunks: batch,
+          ranges,
+          depotId: CS2_CONTENT_DEPOT,
+          key: access.key,
+          hosts: access.hosts,
+          log,
+        });
+        downloaded += result.chunks;
+        bytes += result.bytes;
+      }
+      await verifyDepotFile(join(cs2Dir, name), name, entry, ranges);
+      if (downloaded) fetched.push(part);
     }
     if (bytes) {
       log(
@@ -313,9 +334,18 @@ export const ensureCs2Assets = async ({
     return { fetched, missing, bytes };
   }
 
-  const absent = parts.filter(
-    (part) => !existsSync(join(cs2Dir, cs2ArchivePath(part))),
-  );
+  const absent = [];
+  for (const part of parts) {
+    const name = cs2ArchivePath(part);
+    if (!existsSync(join(cs2Dir, name))) absent.push(part);
+    else
+      await verifyDepotFile(
+        join(cs2Dir, name),
+        name,
+        files.get(name),
+        rangesByPart.get(part),
+      );
+  }
   if (absent.length) {
     log(
       `no depot key cached, so whole archive parts: ${absent.length} of them, about ` +
@@ -327,6 +357,15 @@ export const ensureCs2Assets = async ({
       files: absent.map(cs2ArchivePath),
       log,
     });
+    for (const part of absent) {
+      const name = cs2ArchivePath(part);
+      await verifyDepotFile(
+        join(cs2Dir, name),
+        name,
+        files.get(name),
+        rangesByPart.get(part),
+      );
+    }
   }
 
   return { fetched: absent, missing, bytes: absent.length * 105e6 };

@@ -10,7 +10,16 @@
 // Geometry is a .glb: model/gltf-binary, or a plain stream of bytes on a host that
 // does not know the type. HTML never means a map.
 
+import { resolveMapAssets } from "./mapAssets.js";
+
 export const findMapFile = async (url) => {
+  const assets = await resolveMapAssets(url);
+  if (!assets.legacy)
+    return {
+      url,
+      megabytes: assets.files.geometry.bytes / 1e6,
+      revision: assets.manifest.activeRevision,
+    };
   const head = await fetch(url, { method: "HEAD" }).catch(() => null);
   if (!head?.ok) return null;
   if ((head.headers.get("content-type") ?? "").includes("html")) return null;

@@ -111,7 +111,11 @@ try {
       materials: [
         {
           name: "kz_ffffff_lit",
-          pbrMetallicRoughness: { baseColorTexture: { index: 0 } },
+          pbrMetallicRoughness: {
+            baseColorTexture: { index: 0 },
+            metallicFactor: 0,
+            roughnessFactor: 1,
+          },
         },
       ],
       samplers: [{ wrapS: 33071, wrapT: 33071 }],

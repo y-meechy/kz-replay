@@ -17,6 +17,7 @@ import { readFile, writeFile, mkdir, rename, rm, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { cleanupTemporaryGlb, convertMap, validateGlb } from "./mapPipeline.js";
+import { publishedGeometryPath } from "./mapAssets.js";
 
 const MAX_ATTEMPTS = 3;
 
@@ -56,7 +57,7 @@ const writeManifest = async (path, manifest) => {
  * the API is the version marker.
  */
 const needsWork = async (map, entry, outputDir) => {
-  const file = join(outputDir, `${map.name}.glb`);
+  const file = await publishedGeometryPath(outputDir, map.name);
   if (!existsSync(file)) return "missing";
   try {
     await validateGlb(file);
@@ -85,7 +86,7 @@ const adoptExistingFiles = async (maps, manifest, outputDir, log) => {
   let adopted = 0;
   for (const map of maps) {
     if (manifest.maps[map.name]) continue;
-    const file = join(outputDir, `${map.name}.glb`);
+    const file = await publishedGeometryPath(outputDir, map.name);
     if (!existsSync(file)) continue;
     try {
       await validateGlb(file);

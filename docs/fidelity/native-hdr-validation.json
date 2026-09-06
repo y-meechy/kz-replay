@@ -1,0 +1,107 @@
+{
+  "source": {
+    "vtexPath": "/tmp/kz-native-hdr-inspect/maps/kz_grotto/lightmaps/irradiance.vtex_c",
+    "exrPath": "/tmp/kz-native-hdr-inspect/irradiance.exr",
+    "vtexSha256": "2b5a12c0df59dafe0a8f337f28e27d74691e8409a4c5bdb1ee8add9ded988760",
+    "exrSha256": "5e8abfbcebb838747859101f0d3e973fff8d72e34293e3aed51bfdc19d426cd1",
+    "mip1ExrPath": "/tmp/kz-native-hdr-inspect/mip1.exr",
+    "mip1ExrSha256": "125e4ca1fda9d0a9e99542c786d9fa70bf78dbfbaa6d23b76f1a86a7816ddd1b"
+  },
+  "width": 8192,
+  "height": 8192,
+  "mips": 2,
+  "bytes": 83886128,
+  "samples": 512,
+  "webglError": 0,
+  "containerSha256": "9ce49351bac9e0b5a15cd3c2c0833b30aa00ec69ec4c823d7c158218963a693b",
+  "browserVersion": "151.0.7922.108",
+  "gpu": {
+    "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+    "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+    "vendor": "Google Inc. (Google)",
+    "version": "WebGL 2.0 (OpenGL ES 3.0 Chromium)"
+  },
+  "independentlyDecodedMips": 2,
+  "comparisons": [
+    {
+      "reverseExrRows": false,
+      "fraction": 0,
+      "lod": 0,
+      "maxAbsoluteError": 1.44708251953125,
+      "meanAbsoluteError": 0.09243777122658987,
+      "aboveWhite": 3
+    },
+    {
+      "reverseExrRows": false,
+      "fraction": 0.25,
+      "lod": 0,
+      "maxAbsoluteError": 1.0701522827148438,
+      "meanAbsoluteError": 0.09000791433694151,
+      "aboveWhite": 3
+    },
+    {
+      "reverseExrRows": false,
+      "fraction": 0,
+      "lod": 1,
+      "maxAbsoluteError": 1.2836151123046875,
+      "meanAbsoluteError": 0.08968463161484881,
+      "aboveWhite": 3
+    },
+    {
+      "reverseExrRows": false,
+      "fraction": 0.25,
+      "lod": 0.5,
+      "maxAbsoluteError": 1.0630550384521484,
+      "meanAbsoluteError": 0.08941226818539387,
+      "aboveWhite": 3
+    },
+    {
+      "reverseExrRows": false,
+      "fraction": 0,
+      "lod": 8,
+      "maxAbsoluteError": 1.2836151123046875,
+      "meanAbsoluteError": 0.08968463161484881,
+      "aboveWhite": 3
+    },
+    {
+      "reverseExrRows": true,
+      "fraction": 0,
+      "lod": 0,
+      "maxAbsoluteError": 0,
+      "meanAbsoluteError": 0,
+      "aboveWhite": 2
+    },
+    {
+      "reverseExrRows": true,
+      "fraction": 0.25,
+      "lod": 0,
+      "maxAbsoluteError": 3.725290298461914e-9,
+      "meanAbsoluteError": 2.4253192047278085e-12,
+      "aboveWhite": 0
+    },
+    {
+      "reverseExrRows": true,
+      "fraction": 0,
+      "lod": 1,
+      "maxAbsoluteError": 2.9802322387695312e-8,
+      "meanAbsoluteError": 2.1827872842550278e-11,
+      "aboveWhite": 0
+    },
+    {
+      "reverseExrRows": true,
+      "fraction": 0.25,
+      "lod": 0.5,
+      "maxAbsoluteError": 1.1175870895385742e-8,
+      "meanAbsoluteError": 1.7280399333685637e-11,
+      "aboveWhite": 0
+    },
+    {
+      "reverseExrRows": true,
+      "fraction": 0,
+      "lod": 8,
+      "maxAbsoluteError": 2.9802322387695312e-8,
+      "meanAbsoluteError": 2.1827872842550278e-11,
+      "aboveWhite": 0
+    }
+  ]
+}

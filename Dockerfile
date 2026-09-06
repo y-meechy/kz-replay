@@ -19,6 +19,8 @@ ARG VALVE_RESOURCE_FORMAT_SHA256=30d86dfd72bf35c8a38015c81bd92f0b04b1f49304e73a5
 # at a time, so the image never needs a copy of the game. See src/cs2Content.js.
 ARG DEPOT_DOWNLOADER_VERSION=3.4.0
 ARG DEPOT_DOWNLOADER_SHA256=a999dec66b4850fc961bd50366696d23c2d0fad7b18790e6a5647b2f19097a53
+ARG KTX_SOFTWARE_VERSION=4.4.2
+ARG KTX_SOFTWARE_SHA256=a8781bad05f9624edbf910b7f258cd0a4ba7d3e63b49ecc0a0ab440bf6a0a245
 # Steam publishes this archive at a mutable URL. A changed upstream archive must
 # be reviewed and its checksum updated deliberately before an image can build.
 ARG STEAMCMD_SHA256=cebf0046bfd08cf45da6bc094ae47aa39ebf4155e5ede41373b579b8f1071e7c
@@ -41,6 +43,7 @@ COPY --from=build --chown=node:node /app/viewer/dist ./viewer/dist
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
         ca-certificates \
+        bzip2 \
         curl \
         gosu \
         lib32gcc-s1 \
@@ -71,6 +74,11 @@ RUN apt-get update \
     && unzip -q /tmp/valve-resource-format.zip -d /opt/kz-tools \
     && chmod 0755 /opt/kz-tools/Source2Viewer-CLI \
     && curl --fail --location --proto '=https' --retry 3 --show-error --tlsv1.2 \
+        "https://github.com/KhronosGroup/KTX-Software/releases/download/v${KTX_SOFTWARE_VERSION}/KTX-Software-${KTX_SOFTWARE_VERSION}-Linux-x86_64.tar.bz2" \
+        --output /tmp/ktx-software.tar.bz2 \
+    && printf '%s  %s\n' "$KTX_SOFTWARE_SHA256" /tmp/ktx-software.tar.bz2 | sha256sum --check --strict - \
+    && tar --no-same-owner -xjf /tmp/ktx-software.tar.bz2 -C /opt/kz-tools \
+    && curl --fail --location --proto '=https' --retry 3 --show-error --tlsv1.2 \
         "https://github.com/SteamRE/DepotDownloader/releases/download/DepotDownloader_${DEPOT_DOWNLOADER_VERSION}/DepotDownloader-linux-x64.zip" \
         --output /tmp/depotdownloader.zip \
     && printf '%s  %s\n' "$DEPOT_DOWNLOADER_SHA256" /tmp/depotdownloader.zip \
@@ -78,7 +86,7 @@ RUN apt-get update \
     && unzip -tq /tmp/depotdownloader.zip > /dev/null \
     && unzip -q /tmp/depotdownloader.zip -d /opt/kz-tools \
     && chmod 0755 /opt/kz-tools/DepotDownloader \
-    && rm -f /tmp/steamcmd_linux.tar.gz /tmp/valve-resource-format.zip /tmp/depotdownloader.zip \
+    && rm -f /tmp/steamcmd_linux.tar.gz /tmp/valve-resource-format.zip /tmp/depotdownloader.zip /tmp/ktx-software.tar.bz2 \
     && chown -R node:node /opt/steamcmd /opt/kz-tools
 
 COPY package.json package-lock.json ./

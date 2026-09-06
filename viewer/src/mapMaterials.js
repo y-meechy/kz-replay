@@ -1,4 +1,6 @@
 import * as THREE from "three";
+import { configureLightmapEncoding } from "./mapLighting.js";
+import { BC6H_ENCODING } from "../../src/bc6hTexture.js";
 
 // Geometry-only exports carry the atlas in the base-colour slot on UV0.
 const BAKED_LIGHT_MATERIAL_NAME = /^kz_[0-9a-f]{6}_lit$/;
@@ -8,27 +10,25 @@ export const createMapMaterials = (lightMapIntensity) => {
   const variants = new Map();
 
   return {
-    adopt(material, canBeLit, candidates, owned) {
-      const key = `${material.uuid}:${canBeLit}`;
+    adopt(material, canBeLit, candidates, owned, { hasNormals = true } = {}) {
+      const key = `${material.uuid}:${canBeLit}:${hasNormals}`;
       let adopted = variants.get(key);
       if (!adopted) {
         // Never mutate the source: a later variant must start without the first
         // variant's lightmap or changes to its base-colour texture.
         adopted = material.clone();
-        adopted.side = THREE.FrontSide;
-        adopted.roughness = 1;
-        adopted.metalness = 0;
+        if (!hasNormals && adopted.isMeshStandardMaterial)
+          adopted.flatShading = true;
         if (adopted.map && BAKED_LIGHT_MATERIAL_NAME.test(adopted.name)) {
           adopted.lightMap = adopted.map;
           adopted.lightMap.channel = 0;
           adopted.lightMapIntensity = lightMapIntensity;
           adopted.map = null;
         }
-        adopted.flatShading = !adopted.map;
         adopted.needsUpdate = true;
         variants.set(key, adopted);
       }
-      if (canBeLit) candidates.add(adopted);
+      if (canBeLit && adopted.isMeshStandardMaterial) candidates.add(adopted);
       owned.add(adopted);
       return adopted;
     },
@@ -41,8 +41,23 @@ export const createMapMaterials = (lightMapIntensity) => {
 };
 
 /** Attach the external atlas to eligible surfaces, including colour fallbacks. */
-export const attachBakedLight = (texture, candidates, lightMapIntensity) => {
-  texture.colorSpace = THREE.SRGBColorSpace;
+export const attachBakedLight = (
+  texture,
+  candidates,
+  lightMapIntensity,
+  descriptor = null,
+) => {
+  const rgbm = descriptor?.encoding === "rgbm8-linear";
+  const hdr = rgbm || descriptor?.encoding === BC6H_ENCODING;
+  if (descriptor && !hdr) {
+    throw new Error(`Unsupported lightmap encoding: ${descriptor.encoding}`);
+  }
+  if (rgbm && (!Number.isFinite(descriptor.range) || descriptor.range <= 0)) {
+    throw new Error("RGBM lightmap range must be finite and positive");
+  }
+  // RGBM is numeric data. Applying an sRGB transfer function before RGB * M
+  // corrupts the recovered radiance and clips its relationship to the sky.
+  texture.colorSpace = hdr ? THREE.NoColorSpace : THREE.SRGBColorSpace;
   // TextureLoader defaults to flipping images; GLTFLoader uses unflipped UVs.
   texture.flipY = false;
   texture.channel = 1;
@@ -54,6 +69,7 @@ export const attachBakedLight = (texture, candidates, lightMapIntensity) => {
     if (material.lightMap) continue;
     material.lightMap = texture;
     material.lightMapIntensity = lightMapIntensity;
+    if (hdr) configureLightmapEncoding(material, descriptor);
     material.needsUpdate = true;
     attached += 1;
   }
