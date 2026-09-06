@@ -58,19 +58,37 @@ export const readSkyName = async ({
 
 export const readSkyMaterial = (text) => {
   const scalar = (key) => {
-    const match = new RegExp(`"${key}"\\s+"([^"\\n]+)"`).exec(text);
+    const quoted = new RegExp(`"${key}"\\s+"([^"\\n]+)"`).exec(text);
+    const compiled = new RegExp(
+      `m_name\\s*=\\s*"${key}"[\\s\\S]*?m_flValue\\s*=\\s*([-+0-9.eE]+)`,
+    ).exec(text);
+    const match = quoted ?? compiled;
     const value = match ? Number(match[1]) : 0;
     return Number.isFinite(value) ? value : 0;
   };
-  const match = /"g_vTint"\s+"\[([^\]]+)\]"/.exec(text);
+  const match =
+    /"g_vTint"\s+"\[([^\]]+)\]"/.exec(text) ??
+    /m_name\s*=\s*"g_vTint"[\s\S]*?m_value\s*=\s*\[([^\]]+)\]/.exec(text);
   const tint = match
-    ? match[1].trim().split(/\s+/).slice(0, 3).map(Number)
+    ? match[1]
+        .trim()
+        .split(/[\s,]+/)
+        .slice(0, 3)
+        .map(Number)
     : [1, 1, 1];
   return {
     brightnessExposureBias: scalar("g_flBrightnessExposureBias"),
     renderOnlyExposureBias: scalar("g_flRenderOnlyExposureBias"),
     tint: tint.length === 3 && tint.every(Number.isFinite) ? tint : [1, 1, 1],
   };
+};
+
+export const readCompiledSkyTexture = (text) => {
+  const match =
+    /m_name\s*=\s*"g_tSkyTexture"[\s\S]*?m_pValue\s*=\s*resource:"([^"]+\.vtex)"/.exec(
+      text,
+    );
+  return match?.[1] ?? null;
 };
 
 /**
@@ -92,28 +110,59 @@ export const buildSky = async ({
   await rm(dumpDir, { recursive: true, force: true });
 
   try {
-    // Without the `.vmat` suffix, so the filter also catches the compiled texture the
-    // material points at.
-    const base = skyName.replace(/\.vmat$/i, "");
     const localMaterial = gameDir && join(gameDir, `${skyName}_c`);
-    await run(
+    // Reading DATA does not load the shader. That matters when a map contains a newer
+    // VCS version than the pinned exporter understands: ordinary material decompilation
+    // fails before it can reach an otherwise supported HDR texture.
+    const { stdout: materialData } = await run(
       cli,
       localMaterial && existsSync(localMaterial)
-        ? ["-i", localMaterial, "-d", "-o", join(dumpDir, `${base}.vmat`)]
-        : ["-i", cs2IndexPath(cs2Dir), "-f", base, "-d", "-o", dumpDir],
+        ? ["-i", localMaterial, "-b", "DATA"]
+        : ["-i", cs2IndexPath(cs2Dir), "-f", `${skyName}_c`, "-b", "DATA"],
       BIG_OUTPUT,
-    ).catch(() => {});
+    );
+    const textureName = readCompiledSkyTexture(materialData);
+    if (!textureName) {
+      log(
+        `the sky ${skyName} names no supported HDR texture, keeping the gradient`,
+      );
+      return null;
+    }
+    const textureBase = textureName.replace(/\.vtex$/i, "");
+    const localTexture = gameDir && join(gameDir, `${textureName}_c`);
+    await run(
+      cli,
+      localTexture && existsSync(localTexture)
+        ? [
+            "-i",
+            localTexture,
+            "-d",
+            "--texture_decode_flags",
+            "none",
+            "-o",
+            join(dumpDir, `${textureName}`),
+          ]
+        : [
+            "-i",
+            cs2IndexPath(cs2Dir),
+            "-f",
+            `${textureName}_c`,
+            "-d",
+            "--texture_decode_flags",
+            "none",
+            "-o",
+            dumpDir,
+          ],
+      BIG_OUTPUT,
+    );
 
-    const exrPath = join(dumpDir, `${base}.exr`);
-    const materialPath = join(dumpDir, `${base}.vmat`);
+    const exrPath = join(dumpDir, `${textureBase}.exr`);
     if (!existsSync(exrPath)) {
       log(`the sky ${skyName} is not in the CS2 cache, keeping the gradient`);
       return null;
     }
 
-    const material = readSkyMaterial(
-      existsSync(materialPath) ? await readFile(materialPath, "utf8") : "",
-    );
+    const material = readSkyMaterial(materialData);
 
     const file = await readFile(exrPath);
     const { width, height } = new EXRLoader().parse(
