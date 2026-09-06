@@ -5,6 +5,7 @@ import * as THREE from "three";
 export const configureLightmapEncoding = (material, descriptor) => {
   const previousCompile = material.onBeforeCompile;
   const previousKey = material.customProgramCacheKey();
+  const rgbm = descriptor.encoding === "rgbm8-linear";
   const excludeSceneLights = descriptor.excludeSceneLights === true;
   const sun = descriptor.sun;
   const shadows = descriptor.shadowTexture;
@@ -12,7 +13,7 @@ export const configureLightmapEncoding = (material, descriptor) => {
   if (hasSun) material.kzShadowMap = shadows;
   material.onBeforeCompile = function (shader, renderer) {
     previousCompile.call(this, shader, renderer);
-    shader.uniforms.kzLightmapRange = { value: descriptor.range };
+    if (rgbm) shader.uniforms.kzLightmapRange = { value: descriptor.range };
     if (hasSun) {
       Object.assign(shader.uniforms, {
         kzSunShadows: { value: shadows },
@@ -23,7 +24,7 @@ export const configureLightmapEncoding = (material, descriptor) => {
     }
     shader.fragmentShader = shader.fragmentShader.replace(
       "#include <lightmap_pars_fragment>",
-      `#include <lightmap_pars_fragment>\nuniform float kzLightmapRange;
+      `#include <lightmap_pars_fragment>\n${rgbm ? "uniform float kzLightmapRange;" : ""}
 ${hasSun ? "uniform sampler2D kzSunShadows; uniform vec3 kzSunDirection; uniform vec3 kzSunColor; uniform vec4 kzSunShadowMask;" : ""}`,
     );
     shader.fragmentShader = shader.fragmentShader.replace(
@@ -33,7 +34,9 @@ ${hasSun ? "uniform sampler2D kzSunShadows; uniform vec3 kzSunDirection; uniform
         // Source's baked diffuse factor multiplies albedo directly. Three's
         // indirect Lambert BRDF divides irradiance by PI, so bridge those units.
         // VRF 00c629d: common/lighting.slang:309, csgo_environment.frag.slang:582.
-        "lightMapTexel.rgb * lightMapTexel.a * kzLightmapRange * PI * lightMapIntensity",
+        rgbm
+          ? "lightMapTexel.rgb * lightMapTexel.a * kzLightmapRange * PI * lightMapIntensity"
+          : "lightMapTexel.rgb * PI * lightMapIntensity",
       ),
     );
     if (excludeSceneLights) {
@@ -66,7 +69,7 @@ ${sun.renderSpecular === false ? "reflectedLight.directSpecular = kzPreviousSpec
   };
   // Range is a uniform, so maps with different ranges share the same program.
   material.customProgramCacheKey = () =>
-    `${previousKey}:kz-rgbm-lightmap-v2:${excludeSceneLights}:${hasSun}:${sun?.renderDiffuse}:${sun?.renderSpecular}`;
-  material.userData.kzLightmapEncoding = "rgbm8-linear";
+    `${previousKey}:kz-hdr-lightmap-v3:${descriptor.encoding}:${excludeSceneLights}:${hasSun}:${sun?.renderDiffuse}:${sun?.renderSpecular}`;
+  material.userData.kzLightmapEncoding = descriptor.encoding;
   material.needsUpdate = true;
 };

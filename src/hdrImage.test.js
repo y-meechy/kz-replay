@@ -2,7 +2,41 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import sharp from "sharp";
 import { encodeRgbmImage } from "./hdrImage.js";
-import { encodeShadowChannels } from "./mapLightmap.js";
+import { encodeShadowChannels, encodeIrradiance } from "./mapLightmap.js";
+
+test("EXR irradiance restores Source row order while PNG input keeps its rows", async () => {
+  const data = new Float32Array([0.25, 0, 0, 1, 0, 2, 0, 1]);
+  for (const flipRows of [false, true]) {
+    const result = await encodeIrradiance({
+      width: 1,
+      height: 2,
+      channels: 4,
+      data,
+      decode: (v) => v,
+      flipRows,
+    });
+    const pixels = await sharp(result.png).raw().toBuffer();
+    const decoded = Array.from({ length: 2 }, (_, i) =>
+      [0, 1, 2].map(
+        (c) =>
+          (((pixels[i * 4 + c] / 255) * pixels[i * 4 + 3]) / 255) *
+          result.range,
+      ),
+    );
+    const expected = flipRows
+      ? [
+          [0, 2, 0],
+          [0.25, 0, 0],
+        ]
+      : [
+          [0.25, 0, 0],
+          [0, 2, 0],
+        ];
+    decoded.forEach((rgb, i) =>
+      rgb.forEach((v, c) => assert(Math.abs(v - expected[i][c]) < 0.01)),
+    );
+  }
+});
 
 test("resizing direct-light channels never interprets the fourth light as opacity", async () => {
   const raw = Buffer.from([

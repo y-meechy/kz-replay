@@ -1,0 +1,116 @@
+[
+  {
+    "seconds": 3,
+    "before": "before",
+    "after": "native",
+    "metrics": {
+      "overall": {
+        "width": 1280,
+        "height": 720,
+        "pixelCount": 921600,
+        "channelCount": 3,
+        "sampleCount": 2764800,
+        "differingPixels": 10304,
+        "maxAbsolute": 131,
+        "mae": 0.14581199363425926,
+        "rmse": 2.9946844183694883,
+        "psnr": 38.60378235017888
+      }
+    }
+  },
+  {
+    "seconds": 3,
+    "before": "fallback",
+    "after": "native",
+    "metrics": {
+      "overall": {
+        "width": 1280,
+        "height": 720,
+        "pixelCount": 921600,
+        "channelCount": 3,
+        "sampleCount": 2764800,
+        "differingPixels": 2471,
+        "maxAbsolute": 15,
+        "mae": 0.0017097077546296296,
+        "rmse": 0.06822982930127762,
+        "psnr": 71.4513179135825
+      }
+    }
+  },
+  {
+    "seconds": 12,
+    "before": "before",
+    "after": "native",
+    "metrics": {
+      "overall": {
+        "width": 1280,
+        "height": 720,
+        "pixelCount": 921600,
+        "channelCount": 3,
+        "sampleCount": 2764800,
+        "differingPixels": 0,
+        "maxAbsolute": 0,
+        "mae": 0,
+        "rmse": 0,
+        "psnr": null
+      }
+    }
+  },
+  {
+    "seconds": 12,
+    "before": "fallback",
+    "after": "native",
+    "metrics": {
+      "overall": {
+        "width": 1280,
+        "height": 720,
+        "pixelCount": 921600,
+        "channelCount": 3,
+        "sampleCount": 2764800,
+        "differingPixels": 0,
+        "maxAbsolute": 0,
+        "mae": 0,
+        "rmse": 0,
+        "psnr": null
+      }
+    }
+  },
+  {
+    "seconds": 18,
+    "before": "before",
+    "after": "native",
+    "metrics": {
+      "overall": {
+        "width": 1280,
+        "height": 720,
+        "pixelCount": 921600,
+        "channelCount": 3,
+        "sampleCount": 2764800,
+        "differingPixels": 0,
+        "maxAbsolute": 0,
+        "mae": 0,
+        "rmse": 0,
+        "psnr": null
+      }
+    }
+  },
+  {
+    "seconds": 18,
+    "before": "fallback",
+    "after": "native",
+    "metrics": {
+      "overall": {
+        "width": 1280,
+        "height": 720,
+        "pixelCount": 921600,
+        "channelCount": 3,
+        "sampleCount": 2764800,
+        "differingPixels": 0,
+        "maxAbsolute": 0,
+        "mae": 0,
+        "rmse": 0,
+        "psnr": null
+      }
+    }
+  }
+]

@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { configureLightmapEncoding } from "./mapLighting.js";
+import { BC6H_ENCODING } from "../../src/bc6hTexture.js";
 
 // Geometry-only exports carry the atlas in the base-colour slot on UV0.
 const BAKED_LIGHT_MATERIAL_NAME = /^kz_[0-9a-f]{6}_lit$/;
@@ -46,11 +47,12 @@ export const attachBakedLight = (
   lightMapIntensity,
   descriptor = null,
 ) => {
-  const hdr = descriptor?.encoding === "rgbm8-linear";
+  const rgbm = descriptor?.encoding === "rgbm8-linear";
+  const hdr = rgbm || descriptor?.encoding === BC6H_ENCODING;
   if (descriptor && !hdr) {
     throw new Error(`Unsupported lightmap encoding: ${descriptor.encoding}`);
   }
-  if (hdr && (!Number.isFinite(descriptor.range) || descriptor.range <= 0)) {
+  if (rgbm && (!Number.isFinite(descriptor.range) || descriptor.range <= 0)) {
     throw new Error("RGBM lightmap range must be finite and positive");
   }
   // RGBM is numeric data. Applying an sRGB transfer function before RGB * M

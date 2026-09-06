@@ -748,6 +748,7 @@ export const convertMap = async ({
     await validateGlb(geometry);
 
     const lightSource = containedPath(exportDir, "light.rgbm.png");
+    const compressedLightSource = containedPath(exportDir, "light.bc6");
     const shadowSource = containedPath(exportDir, "light.shadows.png");
     const skySource = containedPath(
       exportDir,
@@ -755,6 +756,12 @@ export const convertMap = async ({
     );
     if (lightmap?.irradiance && trim.lightmap?.lit > 0) {
       await writeFile(lightSource, lightmap.irradiance.png);
+    }
+    if (lightmap?.irradianceCompressed && trim.lightmap?.lit > 0) {
+      await writeFile(
+        compressedLightSource,
+        lightmap.irradianceCompressed.data,
+      );
     }
     if (lightmap?.shadows) await writeFile(shadowSource, lightmap.shadows.png);
     if (sky?.exr) await writeFile(skySource, sky.exr);
@@ -812,6 +819,21 @@ export const convertMap = async ({
                   range: lightmap.irradiance.range,
                   width: lightmap.irradiance.width,
                   height: lightmap.irradiance.height,
+                },
+              }
+            : null,
+        lightmapIrradianceCompressed:
+          lightmap?.irradianceCompressed && trim.lightmap?.lit > 0
+            ? {
+                sourcePath: compressedLightSource,
+                fileName: `${mapName}.light.bc6`,
+                metadata: {
+                  mediaType: "application/octet-stream",
+                  encoding: lightmap.irradianceCompressed.encoding,
+                  colorSpace: "linear",
+                  width: lightmap.irradianceCompressed.width,
+                  height: lightmap.irradianceCompressed.height,
+                  mipCount: lightmap.irradianceCompressed.mipCount,
                 },
               }
             : null,

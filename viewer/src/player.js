@@ -15,6 +15,7 @@ import { TRACK_FLAG } from "../../src/track.js";
 import { attachBakedLight, createMapMaterials } from "./mapMaterials.js";
 import { resolveMapAssets, legacySidecarUrl } from "./mapAssets.js";
 import { loadHdrSky } from "./mapSky.js";
+import { loadPublishedIrradiance } from "./mapIrradiance.js";
 import { createMapLoader } from "./mapLoader.js";
 import { findJumps, jumpAtTick } from "./jumps.js";
 import {
@@ -784,38 +785,33 @@ export const createPlayer = ({
     );
   };
 
-  /**
-   * Attach the map's baked lighting to its textured surfaces.
-   *
-   * A map converted with its real textures cannot carry the lighting atlas inside the
-   * .glb: glTF has no light map slot, and the one slot that would do — base colour — is
-   * where the mapper's own texture goes. So the atlas is written beside the map as
-   * `<map>.light.webp` and paired up here, against the second UV set the trim pass kept
-   * for exactly this.
-   *
-   * Silent on failure, like the sky: a map converted with no lighting, or with the
-   * lighting embedded because it had no textures, simply has no file to fetch.
-   */
+  // glTF has no lightmap slot. Versioned sidecars retain the independent atlas and
+  // encoding contract; only legacy maps tolerate an absent conventional sidecar.
   const loadBakedLight = async (
     mapUrl,
     lightMapCandidates,
     isCurrent,
     assets,
   ) => {
-    const descriptor = assets.files?.lightmapIrradiance;
-    const url = assets.legacy
-      ? legacySidecarUrl(mapUrl, ".light.webp")
-      : descriptor?.url;
-    if (!url) return;
-    const texture = await new Promise((resolve) => {
-      new THREE.TextureLoader().load(url, resolve, undefined, () =>
-        resolve(null),
-      );
-    });
-    if (!texture) {
-      if (!assets.legacy)
-        throw new Error("Published irradiance texture could not be loaded");
-      return;
+    let texture;
+    let descriptor;
+    if (assets.legacy) {
+      const url = legacySidecarUrl(mapUrl, ".light.webp");
+      if (!url) return;
+      texture = await new THREE.TextureLoader()
+        .loadAsync(url)
+        .catch(() => null);
+      if (!texture) return;
+    } else {
+      const loaded = await loadPublishedIrradiance(renderer, assets.files);
+      if (!loaded) return;
+      ({ texture, descriptor } = loaded);
+      assets.runtimeIrradiance = {
+        encoding: descriptor.encoding,
+        fallbackReason: loaded.fallbackReason,
+        width: descriptor.width,
+        height: descriptor.height,
+      };
     }
     if (!isCurrent()) {
       texture.dispose();
@@ -1786,6 +1782,7 @@ export const createPlayer = ({
           loadedAssets?.manifest?.revision ??
           null,
         mapLoadTimings: { ...mapLoadTimings },
+        irradiance: loadedAssets?.runtimeIrradiance ?? null,
         cameraFar: camera.far,
         fog: scene.fog && { near: scene.fog.near, far: scene.fog.far },
       };

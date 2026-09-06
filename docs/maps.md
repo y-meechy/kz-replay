@@ -61,10 +61,21 @@ An immutable revision GLB URL uses its sibling manifest for comparison or rollba
 
 ## Lighting contract and known gaps
 
-Irradiance remains linear HDR, currently quantized to explicitly ranged RGBM8 in a
-lossless PNG container. PNG losslessness does not make RGBM quantization lossless.
-The atlas is not tone-mapped during conversion; original dimensions are retained.
-Filtering precision, storage size and GPU memory still need improvement.
+Pipeline 3 preserves supported unsigned BC6H irradiance blocks and authored mips in
+a version-1 `.bc6` container, without decoding/recompressing their radiance. On
+WebGL devices with BPTC support, the viewer loads this native atlas. Other devices
+retain the full-resolution, explicitly ranged RGBM8 PNG fallback. A failed native
+download also uses that same-generation fallback and records the reason in debug
+output. No resolution reduction is hidden behind capability selection.
+
+EXR decoding reverses rows for Three's ordinary texture convention. Atlas conversion
+now reverses those rows back because exported Source atlas UVs are unchanged.
+This correction does not apply to equirectangular skies, whose north pole maps to
+v=1 in Three. See [native-HDR validation](fidelity/native-hdr.md).
+
+Neither path tone-maps during conversion. Native BC6H preserves the original engine
+quantization and filters linear radiance. PNG losslessness does not make RGBM
+quantization or interpolation lossless; fallback filtering remains a known gap.
 
 Direct-shadow RGBA contains four independent shadow amounts, not colour plus opacity.
 For supported v8.2–v8.4 maps, the sun's assigned channel gives visibility as

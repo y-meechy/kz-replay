@@ -20,18 +20,18 @@
 
 ## Findings and decisions
 
-| Mismatch | Verified cause | Correction/evidence status |
-| --- | --- | --- |
-| Surface detail/scenery | Conversion deletes foliage, tangents, vertex colours; texture caps; file-size-triggered simplification | Retention and audit implemented; representative GPU performance pending |
-| Materials | Runtime forces roughness=1, metalness=0, FrontSide, flat shading without base texture | Material preservation implemented and regression-tested |
-| Opaque foliage/decal cards | VRF fallback maps unknown CS2 shader g_tColor as RGB and discards alpha, despite MASK/BLEND material | Direct source extraction confirms alpha; conversion restores 37 Grotto materials without changing RGB/cutoff; compressed recapture pending |
-| Compression ordering | Running texture conversion after meshopt decodes and drops EXT_meshopt_compression | Texture encoding moved before final geometry packing |
-| Direct lighting | Converter treats greyscale direct-light atlas as sun visibility; VRF uses `1-dot(RGBA, assigned mask)` | Remove unsupported inferred sun; preserve source channels |
-| HDR/exposure | Irradiance and sky separately compressed by exponential curve, then ACES applied in viewer | Versioned linear lighting contract under investigation |
-| Cache correctness | GLB and mutable sibling files published separately; failed/missing sidecars can mix generations | Immutable bundles, manifest published last |
-| Atlas placement | Grotto compiled UV scale is 1.14284; VRF 19.2 c722083 does not bake it, current upstream does | Converter-version-aware UV correction and explicit atlas eligibility |
-| Missing real sky | Grotto packages gc_sky8 locally; old pipeline only searched the base-game cache | Resolve Workshop sky first, preserve its EXR and authored exposure bias |
-| Silent material changes | NodeIO lacked extension registration; no-base-texture materials recoloured by filename | Preserve glTF extensions and authored solid-colour/emissive factors |
+| Mismatch                   | Verified cause                                                                                         | Correction/evidence status                                                                                                                                  |
+| -------------------------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Surface detail/scenery     | Conversion deletes foliage, tangents, vertex colours; texture caps; file-size-triggered simplification | Retention and audit implemented; representative GPU performance pending                                                                                     |
+| Materials                  | Runtime forces roughness=1, metalness=0, FrontSide, flat shading without base texture                  | Material preservation implemented and regression-tested                                                                                                     |
+| Opaque foliage/decal cards | VRF fallback maps unknown CS2 shader g_tColor as RGB and discards alpha, despite MASK/BLEND material   | Direct source extraction confirms alpha; conversion restores 37 Grotto materials without changing RGB/cutoff; matched compressed recapture confirms cutouts |
+| Compression ordering       | Running texture conversion after meshopt decodes and drops EXT_meshopt_compression                     | Texture encoding moved before final geometry packing                                                                                                        |
+| Direct lighting            | Converter treats greyscale direct-light atlas as sun visibility; VRF uses `1-dot(RGBA, assigned mask)` | Remove unsupported inferred sun; preserve source channels                                                                                                   |
+| HDR/exposure               | Irradiance and sky separately compressed by exponential curve, then ACES applied in viewer             | Versioned linear lighting contract under investigation                                                                                                      |
+| Cache correctness          | GLB and mutable sibling files published separately; failed/missing sidecars can mix generations        | Immutable bundles, manifest published last                                                                                                                  |
+| Atlas placement            | Grotto compiled UV scale is 1.14284; VRF 19.2 c722083 does not bake it, current upstream does          | Converter-version-aware UV correction and explicit atlas eligibility                                                                                        |
+| Missing real sky           | Grotto packages gc_sky8 locally; old pipeline only searched the base-game cache                        | Resolve Workshop sky first, preserve its EXR and authored exposure bias                                                                                     |
+| Silent material changes    | NodeIO lacked extension registration; no-base-texture materials recoloured by filename                 | Preserve glTF extensions and authored solid-colour/emissive factors                                                                                         |
 
 ## Measurements so far
 
@@ -88,6 +88,35 @@
   into RGB and moves original B roughness into A. Exported normals may be correct while
   fallback material mapping drops this roughness channel; verify and repair using texture
   compiler metadata, not a blanket normal-map inversion.
+- September 6 continuation: publishing retried after explicit user authorization;
+  connector still rejects writes with `approval policy is never`. No remote PR exists.
+  Checkpoint revalidated locally: all 54 tests pass; production Vite build passes
+  (large JS chunk warning remains). Astra, Sol and Luna delegation is available again:
+  Astra owns native compressed HDR investigation/implementation, Sol fixes pinned shader
+  archive retrieval, Luna prepares the honest draft PR description. Final acceptance
+  review is still pending, not implied by these implementation tasks.
+- Actual Grotto irradiance VTEX is unsigned BC6H: 8192² base plus authored 4096² mip,
+  83,886,080 GPU block bytes versus 268,435,456 RGBM base bytes. Native preservation
+  is being tested; no reduced resolution or claimed hardware performance result.
+- Native HDR implemented and integrated: pipeline 3, version-1 BC6 container,
+  capability-based selection plus full-resolution same-generation RGBM fallback.
+  Actual independent CPU/GPU checks cover 512 positions, bilinear/trilinear sampling,
+  both authored mips and partial-chain clamping: max error below 3e-8, WebGL error 0.
+  This exposed and corrected EXR atlas row reversal. Sky projection intentionally
+  retains EXRLoader's reversal. Source/file hashes and results are in `fidelity/native-hdr.md`.
+- Diagnostic native bundle `34b747036d3f3bfb7fbf2bcb` preserves old assets. Nine matched
+  captures (3/12/18 s, old/native/corrected-fallback) have no shader/page errors.
+  Only 1.1% of pixels change at 3 s; 12/18 s are identical. This is NOT a broad
+  visible improvement: unmapped lighting/material coverage remains the next major gap.
+  Single cold loads: old 23.93 s, native 21.30 s, corrected fallback 22.80 s; not enough
+  to claim performance parity or improvement. All 67 tests, build and Prettier pass.
+- Sol's fixed shader acquisition retrieved 10 pinned archives (677,350,767 bytes),
+  verified all 654 manifest chunk mappings (zero SHA-1 mismatches), and handles
+  repeated chunk hashes at different file offsets. Root independently confirmed
+  hash-verified cache reuse with no download logs. Shader-aware glTF reexport pending.
+- Astra hit a usage limit after native implementation/validation, before its requested
+  independent review of integration and Sol's archive changes. Root continues review;
+  do not label Astra's final acceptance review complete.
 
 Upstream renderer investigation is pinned to ValveResourceFormat
 `00c629d321171ad0b9be83994c5e9cb15e8c5bd9`; deployed converter is 19.2.

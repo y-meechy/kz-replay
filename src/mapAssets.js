@@ -21,7 +21,7 @@ import { createReadStream } from "node:fs";
 import { join } from "node:path";
 
 export const MAP_ASSET_SCHEMA_VERSION = 1;
-export const MAP_PIPELINE_VERSION = 2;
+export const MAP_PIPELINE_VERSION = 3;
 
 export const publishedGeometryPath = async (outputDir, mapName) => {
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(mapName))

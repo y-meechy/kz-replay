@@ -61,6 +61,9 @@ export const configureHdrSky = (texture, descriptor) => {
 };
 
 export const loadHdrSky = async (url, descriptor) => {
+  // Keep EXRLoader's row reversal here: VRF latlong row zero points north,
+  // while Three's equirectUv maps north to v=1. This differs from the lightmap
+  // atlas, whose exported UVs retain Source's row-zero convention.
   const texture = await new EXRLoader().loadAsync(url);
   try {
     return configureHdrSky(texture, descriptor);

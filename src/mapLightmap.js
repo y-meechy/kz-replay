@@ -10,6 +10,8 @@ import { HALF_TO_FLOAT } from "./tonemap.js";
 import { encodeRgbmImage } from "./hdrImage.js";
 import { EXRLoader } from "three/addons/loaders/EXRLoader.js";
 import { runTool as run } from "./toolProcess.js";
+import { readSource2Bc6h } from "./source2Texture.js";
+import { encodeBc6hTexture } from "./bc6hTexture.js";
 
 const BIG_OUTPUT = { maxBuffer: 64 * 1024 * 1024 };
 
@@ -64,6 +66,9 @@ const readIrradiance = async (path) => {
       width,
       height,
       channels: 4,
+      // EXRLoader prepares bottom-up rows for a Three DataTexture. The PNG and
+      // unchanged Source BC6H blocks must both retain the original top-down rows.
+      flipRows: true,
       decode: decoderFor({
         half: !(data instanceof Float32Array),
         srgb: false,
@@ -86,14 +91,74 @@ const readIrradiance = async (path) => {
   };
 };
 
-const encodeIrradiance = async (source, size) => {
+export const encodeIrradiance = async (source, size) => {
   return encodeRgbmImage({
     width: source.width,
     height: source.height,
-    sample: (index, channel) =>
-      source.decode(source.data[index * source.channels + channel]),
+    sample: (index, channel) => {
+      const sourceIndex = source.flipRows
+        ? (source.height - 1 - Math.floor(index / source.width)) *
+            source.width +
+          (index % source.width)
+        : index;
+      return source.decode(
+        source.data[sourceIndex * source.channels + channel],
+      );
+    },
     ...(size ? { targetWidth: size, targetHeight: size } : {}),
   });
+};
+
+const preserveCompressedIrradiance = async ({
+  cli,
+  mapVpk,
+  mapName,
+  outDir,
+  source,
+  size,
+  log,
+}) => {
+  // A requested resize changes the UV-to-texel relation; native storage must
+  // describe the same atlas as the RGBM fallback and direct-shadow atlas.
+  if (size && (size !== source.width || size !== source.height)) return null;
+  try {
+    await run(
+      cli,
+      [
+        "-i",
+        mapVpk,
+        "-f",
+        `maps/${mapName}/lightmaps/irradiance.vtex_c`,
+        "-o",
+        outDir,
+      ],
+      BIG_OUTPUT,
+    );
+    const raw = await readFile(
+      dumpedPath({ outDir, mapName, name: "irradiance", extension: "vtex_c" }),
+    );
+    const parsed = readSource2Bc6h(raw);
+    if (parsed.width !== source.width || parsed.height !== source.height)
+      throw new Error(
+        "Native irradiance dimensions differ from the decoded atlas",
+      );
+    const data = encodeBc6hTexture(parsed);
+    log(
+      `preserving native BC6H irradiance: ${parsed.width}×${parsed.height}, ${parsed.mipmaps.length} authored mips, ${data.byteLength} bytes`,
+    );
+    return {
+      data,
+      encoding: parsed.encoding,
+      width: parsed.width,
+      height: parsed.height,
+      mipCount: parsed.mipmaps.length,
+    };
+  } catch (error) {
+    log(
+      `native BC6H irradiance unavailable; retaining RGBM fallback: ${error.message}`,
+    );
+    return null;
+  }
 };
 
 /**
@@ -134,6 +199,15 @@ export const buildLightmap = async ({
 
     const source = await readIrradiance(irradiancePath);
     const irradiance = await encodeIrradiance(source, size);
+    const irradianceCompressed = await preserveCompressedIrradiance({
+      cli,
+      mapVpk,
+      mapName,
+      outDir: dumpDir,
+      source,
+      size,
+      log,
+    });
     const shadowPath = await dumpTexture({
       cli,
       mapVpk,
@@ -171,6 +245,7 @@ export const buildLightmap = async ({
     );
     return {
       irradiance,
+      irradianceCompressed,
       shadows,
       source: {
         width: source.width,

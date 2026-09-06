@@ -40,6 +40,10 @@ window.fidelity = {
         }
       },
     });
+    // Install before map loading: compileAsync and the first frames can otherwise
+    // fail before the benchmark starts recording shader diagnostics.
+    player.__internals.renderer.debug.onShaderError = (gl, program) =>
+      errors.push(gl.getProgramInfoLog(program));
     player.pause();
     player.setCameraMode("first-person");
     if (!overlays && !player.setReplayOverlaysVisible)
@@ -53,8 +57,6 @@ window.fidelity = {
     // to settle externally before warm measurements; retain the cold readiness duration.
     await nextFrame();
     await nextFrame();
-    player.__internals.renderer.debug.onShaderError = (gl, program) =>
-      errors.push(gl.getProgramInfoLog(program));
     return {
       readyMs: performance.now() - start,
       mapLoadAndCompileMs: performance.now() - loadStart,
