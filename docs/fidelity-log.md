@@ -152,3 +152,84 @@ Upstream renderer investigation is pinned to ValveResourceFormat
 - No claim of 1:1 appearance, FPS parity, or representative reconversion until measured.
 - Pending: sky orientation/sun/fog/probes/3D skybox, directional irradiance, custom blends/decals/water,
   character environment/animation/first-person gaps, representative asset conversions, review.
+
+## Web profile: why revision `4f39a4f85115f8c5f0a5fe89` failed, and the replacement
+
+Live Grotto revision `4f39a4f85115f8c5f0a5fe89` (fidelity profile) is
+347,167,204 bytes of GLB beside an 83.9 MB native BC6H atlas, a 158.3 MB RGBM PNG
+fallback, a 14.9 MB shadow atlas and a 93.6 MB EXR sky: 539.6 MB on a BPTC device,
+614 MB on the fallback path, all uncompressed and all before the first frame. The
+GLB is 321.6 MB of textures (221 KTX2 UASTC, no duplicates; 64 textures at 2048²
+account for 251 MB: 123 MB normal maps, 193 MB base colour), 23.1 MB of meshopt
+geometry (1,797,980 triangles, eight vertex streams) and a 2.3 MB JSON chunk.
+UASTC is a fixed 8 bits per pixel, so Zstandard bought nothing.
+
+Loaded from a local server on an M1 Max (Chrome, ANGLE Metal, 1280×720, three
+repeats, `docs/fidelity/web-profile/benchmark-fidelity.json`): cold readiness
+11,502 / 6,890 / 6,716 ms, asset stage 3.5–3.8 s, first shader compile 2.2 s,
+JS heap 723 MB to 1.52 GB (the 94 MB EXR decodes to float in JavaScript). At a
+typical 50 Mbit/s that payload is about ninety seconds of download; that is the
+stall and the failure the deployed viewer showed. The deployed loading could not
+be re-measured from this machine: the production host is not reachable with the
+available SSH keys.
+
+The pipeline now defaults to a `web` profile; `fidelity` stays selectable as the
+diagnostic reference. Every mesh, material, vertex colour and lightmap UV is kept;
+only resolution and encoding change (recorded in `audit.dropped`):
+
+| File                 | legacy  | fidelity `4f39a4f8` | web `204bd8d6`  |
+| -------------------- | ------- | ------------------- | --------------- |
+| GLB                  | 13.6 MB | 347.2 MB            | 50.5 MB         |
+| native BC6H atlas    | —       | 83.9 MB (8192²)     | 16.8 MB (4096²) |
+| RGBM fallback        | 0.3 MB† | 158.3 MB PNG        | 23.9 MB WebP    |
+| shadow atlas         | —       | 14.9 MB PNG         | 3.5 MB WebP     |
+| sky                  | —       | 93.6 MB EXR         | 5.0 MB EXR      |
+| downloaded, BPTC     | 13.9 MB | 539.6 MB            | 75.8 MB         |
+| downloaded, fallback | 13.9 MB | 614.0 MB            | 82.9 MB         |
+
+† legacy ships one tone-mapped 1024² WebP.
+
+The web GLB is 29.9 MB of textures (138 colour textures as ETC1S at ≤1024: 14.8 MB;
+65 normal maps as UASTC at ≤512: 13.8 MB), 18.6 MB of meshopt geometry (tangents,
+`TEXCOORD_2` and `_TEXCOORD_4` dropped; the same 1,797,980 triangles) and 1.9 MB
+JSON. The native atlas ships the compiler's authored 4096² mip unchanged; RGBM
+fallback and shadow atlas are resized to match and stored as lossless WebP (decoded
+bytes verified identical to the PNG). UASTC RDO was measured and rejected: 46.07 MB
+at lambda 2 and at lambda 8 alike.
+
+Measured on the same machine and settings (`benchmark-web.json`, three repeats,
+10 s fixed first-person path, 600 frames each): cold readiness 5,129 / 1,513 /
+1,579 ms (first repeat includes a 1,717 ms shader compile; later repeats hit
+Chrome's shader cache, as did the legacy and fidelity runs), asset stage 0.8–1.0 s,
+JS heap 251–377 MB. Legacy (`benchmark-legacy.json`): 4,605 / 460 / 462 ms, heap
+50–53 MB. Warmed frame times are identical for all three bundles and vsync-bound
+on this display: median 8.3 ms; p95 9.1–10.1 ms; p99 9.3–11.7 ms. Draw calls and
+triangles per frame are the same for fidelity and web (median 214.5 calls and
+465,431 triangles, p99 547 and 1,084,609) against legacy's 145.5 / 251,848, because
+legacy deleted the foliage. No WebGL or shader errors in any run.
+
+Matched captures (1280×720, four views: first-person foliage at 13 s, and fixed
+reference cameras indoors, at a dark brick tower, and a distant cliff) are in
+`docs/fidelity/web-profile/`. Against the fidelity bundle, the web packing measures
+MAE 13.8 / PSNR 20.5 dB (foliage), 4.8 / 26.5 (indoor), 11.4 / 22.0 (dark),
+3.9 / 26.4 (distant); legacy against fidelity measures 32.0 / 15.4, 45.5 / 12.0,
+21.1 / 18.8 and 87.4 / 8.5. The visible differences are texture detail on
+close-up brick and rock (2048 → 1024) and softer normal maps; no scenery is missing.
+
+Two caveats. The web-profile GLB used for those captures is the live fidelity
+export repacked through the identical web texture and geometry steps
+(`webrepack`, 50,460,536 bytes), because a conversion on this macOS machine
+resolves some borrowed base-game textures differently from the Linux server:
+props such as the indoor rug arrive with the exporter's default ORM texture and a
+metallic factor of 1, and render black under lightmap-only lighting. The
+pipeline-produced web revision `204bd8d6cbc1265d972ca22a` (50,478,000 bytes)
+matches the repack in size and load behaviour and must be regenerated on the
+server before publication. And the live manifest holds only the fidelity revision,
+so the working rollback is the root `kz_grotto.glb`/`kz_grotto.light.webp` legacy
+pair: removing or renaming `kz_grotto.assets.json` restores it without deleting
+any revision directory.
+
+Also observed: the baked lightmap reaches 135 of 946 surfaces in both fidelity and
+web bundles (the `agg_merge` mesh names do not match the world's material table),
+and Three r170's `EXRExporter` writes 16-line ZIP blocks its own loader reads back
+as zeros, so the downsampled sky uses single-scanline ZIPS.
