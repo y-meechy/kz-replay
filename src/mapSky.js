@@ -5,6 +5,7 @@ import { readdir, readFile, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { EXRLoader } from "three/addons/loaders/EXRLoader.js";
+import { downsampleExr } from "./hdrImage.js";
 import { cs2IndexPath } from "./cs2Content.js";
 import { runTool as run } from "./toolProcess.js";
 
@@ -104,6 +105,8 @@ export const buildSky = async ({
   gameDir = null,
   skyName,
   workDir,
+  // Target width of the latlong image; null keeps the source resolution.
+  size = null,
   log = () => {},
 }) => {
   const dumpDir = join(workDir, "sky");
@@ -164,12 +167,18 @@ export const buildSky = async ({
 
     const material = readSkyMaterial(materialData);
 
-    const file = await readFile(exrPath);
-    const { width, height } = new EXRLoader().parse(
+    let file = await readFile(exrPath);
+    let { width, height } = new EXRLoader().parse(
       file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength),
     );
     if (width !== height * 2)
       throw new Error("Sky EXR is not a 2:1 latlong image");
+    if (size && size < width) {
+      // Box-filtered in linear radiance, written back as half-float ZIP EXR: the
+      // browser still decodes one small EXR instead of a 94 MB one. Single-scanline
+      // ZIPS: Three r170 round-trips its own 16-line ZIP blocks as zeros.
+      ({ exr: file, width, height } = await downsampleExr(file, size));
+    }
     log(
       `sky ${skyName}: preserved ${width}×${height} HDR EXR, ${(file.length / 1024).toFixed(0)} KB`,
     );

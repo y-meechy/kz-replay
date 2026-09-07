@@ -70,3 +70,24 @@ test("native HDR cannot silently substitute a lower-resolution atlas", async () 
   );
   assert.equal(await loadPublishedIrradiance({}, {}), null);
 });
+
+test("a smaller native atlas ships the authored mip chain from that level, never a recompression", async () => {
+  const { authoredMipChain } = await import("./mapLightmap.js");
+  const mip = (side) => ({
+    width: side,
+    height: side,
+    data: new Uint8Array(Math.ceil(side / 4) ** 2 * 16).fill(side & 255),
+  });
+  const texture = {
+    encoding: "bc6h-unsigned-linear",
+    width: 16,
+    height: 16,
+    mipmaps: [mip(16), mip(8), mip(4)],
+  };
+  const chain = authoredMipChain(texture, 8);
+  assert.equal(chain.width, 8);
+  assert.equal(chain.mipmaps.length, 2);
+  assert.equal(chain.mipmaps[0].data[0], 8);
+  assert.equal(chain.mipmaps[1].data[0], 4);
+  assert.equal(authoredMipChain(texture, 6), null);
+});

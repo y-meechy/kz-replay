@@ -91,6 +91,20 @@ const readIrradiance = async (path) => {
   };
 };
 
+/** The authored mip chain starting at the level whose side is `size`, or null. */
+export const authoredMipChain = (texture, size) => {
+  const level = texture.mipmaps.findIndex(
+    (mip) => mip.width === size && mip.height === size,
+  );
+  if (level < 0) return null;
+  return {
+    ...texture,
+    width: size,
+    height: size,
+    mipmaps: texture.mipmaps.slice(level),
+  };
+};
+
 export const encodeIrradiance = async (source, size) => {
   return encodeRgbmImage({
     width: source.width,
@@ -118,9 +132,6 @@ const preserveCompressedIrradiance = async ({
   size,
   log,
 }) => {
-  // A requested resize changes the UV-to-texel relation; native storage must
-  // describe the same atlas as the RGBM fallback and direct-shadow atlas.
-  if (size && (size !== source.width || size !== source.height)) return null;
   try {
     await run(
       cli,
@@ -137,11 +148,18 @@ const preserveCompressedIrradiance = async ({
     const raw = await readFile(
       dumpedPath({ outDir, mapName, name: "irradiance", extension: "vtex_c" }),
     );
-    const parsed = readSource2Bc6h(raw);
-    if (parsed.width !== source.width || parsed.height !== source.height)
+    const full = readSource2Bc6h(raw);
+    if (full.width !== source.width || full.height !== source.height)
       throw new Error(
         "Native irradiance dimensions differ from the decoded atlas",
       );
+    // Native storage must describe the same atlas as the RGBM fallback and the
+    // shadow atlas. A smaller requested size is honoured only when the compiler
+    // authored a mip of exactly that size: its blocks ship unchanged, from that
+    // level down, instead of being decoded and recompressed.
+    const parsed = size ? authoredMipChain(full, size) : full;
+    if (!parsed)
+      throw new Error(`no authored ${size}×${size} mip in the native atlas`);
     const data = encodeBc6hTexture(parsed);
     log(
       `preserving native BC6H irradiance: ${parsed.width}×${parsed.height}, ${parsed.mipmaps.length} authored mips, ${data.byteLength} bytes`,

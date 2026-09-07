@@ -28,6 +28,7 @@ import {
 } from "../src/config.js";
 import { writeJsonAtomically } from "../src/geometry.js";
 import { convertMap } from "../src/mapPipeline.js";
+import { DEFAULT_MAP_PROFILE } from "../src/mapQuality.js";
 import { convertPlayerModel } from "../src/playerModelPipeline.js";
 import { analyseRun } from "../src/analysis.js";
 import { compareRuns } from "../src/compare.js";
@@ -241,7 +242,7 @@ const commands = {
       outputDir: MAPS_DIR,
       steamcmd: flags.steamcmd ?? "steamcmd",
       workshopDir: flags["workshop-dir"] ?? null,
-      profile: flags.profile ?? "fidelity",
+      profile: flags.profile ?? DEFAULT_MAP_PROFILE,
       textureCompression: flags["texture-compression"] ?? "uastc",
       exporterLightmapUvs: flags["exporter-lightmap-uvs"] ?? "auto",
       cleanup: !flags["keep-work"],

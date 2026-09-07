@@ -60,6 +60,20 @@ const KEEP_ATTRIBUTES_TEXTURED_LIT = new Set([
   LIGHTMAP_UV,
 ]);
 
+/**
+ * What the browser can actually read. Three.js derives tangents from screen-space
+ * derivatives when a normal map is present, never looks past the UV sets a material
+ * references, and ignores exporter-private `_` attributes. On kz_grotto these three
+ * were 12.6 MB of the 51 MB of vertex data.
+ */
+const WEB_ATTRIBUTES = new Set([
+  "POSITION",
+  "NORMAL",
+  "COLOR_0",
+  "TEXCOORD_0",
+  LIGHTMAP_UV,
+]);
+
 /** Which of the four sets above applies, given what this map is being shipped with. */
 const legacyAttributesFor = ({ withTextures, withLightmap }) => {
   if (withTextures && withLightmap) return KEEP_ATTRIBUTES_TEXTURED_LIT;
@@ -197,16 +211,18 @@ export const trimMap = async ({
   lightmapUvScale = [1, 1],
   readSourceTexture = null,
 }) => {
-  if (!new Set(["all", "legacy"]).has(attributePolicy)) {
+  if (!new Set(["all", "web", "legacy"]).has(attributePolicy)) {
     throw new TypeError(`unknown map attribute policy: ${attributePolicy}`);
   }
-  const keepAttributes =
+  let keepAttributes =
     attributePolicy === "all"
       ? null
-      : legacyAttributesFor({
-          withTextures,
-          withLightmap: Boolean(lightmap),
-        });
+      : attributePolicy === "web"
+        ? new Set(WEB_ATTRIBUTES)
+        : legacyAttributesFor({
+            withTextures,
+            withLightmap: Boolean(lightmap),
+          });
   const texturesFilledIn = withTextures
     ? await fillInMissingTextures(input)
     : [];
@@ -214,9 +230,19 @@ export const trimMap = async ({
   const document = await io.read(input);
   const root = document.getRoot();
   const sourceMaterialRepairs =
-    withTextures && attributePolicy === "all"
+    withTextures && attributePolicy !== "legacy"
       ? await repairSourceMaterialAlpha(document, readSourceTexture)
       : null;
+  if (attributePolicy === "web") {
+    // A material may address any UV set through its texture infos; keep those.
+    for (const material of root.listMaterials()) {
+      for (const edge of document.getGraph().listChildEdges(material)) {
+        const info = edge.getChild();
+        if (info?.propertyType === "TextureInfo")
+          keepAttributes.add(`TEXCOORD_${info.getTexCoord()}`);
+      }
+    }
+  }
 
   let trianglesBefore = 0;
   let meshesBefore = 0;

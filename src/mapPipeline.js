@@ -36,7 +36,11 @@ import {
   MAP_PIPELINE_VERSION,
   publishMapAssets,
 } from "./mapAssets.js";
-import { qualityReductions, resolveMapQuality } from "./mapQuality.js";
+import {
+  DEFAULT_MAP_PROFILE,
+  qualityReductions,
+  resolveMapQuality,
+} from "./mapQuality.js";
 import { buildLightmap } from "./mapLightmap.js";
 import { createSourceTextureReader } from "./sourceMaterialRepair.js";
 import { readMaterialNames } from "./mapMaterialNames.js";
@@ -222,7 +226,7 @@ export const convertMap = async ({
   budgetBytes = 15_000_000,
   // Leaves and branches are millions of triangles a player runs straight through.
   // Turn this off if a map uses plants as climbable props.
-  profile = "fidelity",
+  profile = DEFAULT_MAP_PROFILE,
   dropFoliage,
   // Export the map's own materials and textures, which the workshop item carries and
   // which are the closest thing to what a player actually sees. On by default; it
@@ -246,9 +250,10 @@ export const convertMap = async ({
   // CS2 holds it, so this is the one step that needs anything from the game — one
   // archive part per distinct sky, cached under CS2_DIR. See mapSky.js.
   withSky = false,
-  // Width of that image; the height is half, because it is equirectangular. 1024 is
-  // about 5 KB: a sky is smooth, so there is nothing for WebP to spend bytes on.
-  skySize = 1024,
+  // Width of that image; the height is half, because it is equirectangular. The
+  // profile decides; an explicit value overrides it. Grotto's source sky is a 94 MB
+  // 4096×2048 EXR that the browser decodes in JavaScript before the first frame.
+  skySize,
   // Where the borrowed CS2 assets are cached. Only read when withSky is on.
   cs2Dir = CS2_DIR,
   // Only read when withTextures is on. Textures tile, so this is detail per repeat
@@ -276,6 +281,7 @@ export const convertMap = async ({
     dropFoliage,
     textureSize,
     lightmapSize,
+    skySize,
     simplifyError,
   });
 
@@ -559,7 +565,7 @@ export const convertMap = async ({
             cs2Dir,
             skyName,
             workDir,
-            size: skySize,
+            size: quality.skySize,
             log,
           });
         }
@@ -649,9 +655,56 @@ export const convertMap = async ({
     // to geometry quality; simplification only runs when explicitly requested.
     log("compressing…");
     if (withTextures && textureCompression === "uastc") {
-      const texturePacked = containedPath(exportDir, "world.textures.glb");
       // Texture transforms decode EXT_meshopt_compression on read. Run them first
       // so the final geometry pass cannot accidentally publish unpacked buffers.
+      const encoderEnvironment = {
+        ...BIG_OUTPUT,
+        env: {
+          ...process.env,
+          PATH: `${dirname(textureEncoder)}:${process.env.PATH}`,
+        },
+      };
+      // Downscale before encoding: toktx cannot resize, and a KTX2 image cannot be
+      // resized afterwards without decoding it.
+      if (quality.textureSize) {
+        const resized = containedPath(exportDir, "world.resized.glb");
+        await run(
+          optimizer,
+          [
+            "resize",
+            packInput,
+            resized,
+            "--width",
+            String(quality.textureSize),
+            "--height",
+            String(quality.textureSize),
+          ],
+          BIG_OUTPUT,
+        );
+        packInput = resized;
+      }
+      if (quality.textureEncoding === "etc1s-color") {
+        // Colour and emissive go ETC1S. Everything else keeps UASTC below; toktx skips
+        // textures that are already KTX2, so the two passes never overlap.
+        const colourPacked = containedPath(exportDir, "world.colour.glb");
+        await run(
+          optimizer,
+          [
+            "etc1s",
+            packInput,
+            colourPacked,
+            "--slots",
+            "{baseColorTexture,emissiveTexture}",
+            "--quality",
+            "160",
+            "--jobs",
+            "2",
+          ],
+          encoderEnvironment,
+        );
+        packInput = colourPacked;
+      }
+      const texturePacked = containedPath(exportDir, "world.textures.glb");
       await run(
         optimizer,
         [
@@ -660,18 +713,18 @@ export const convertMap = async ({
           texturePacked,
           "--level",
           "2",
+          // Plain UASTC is a fixed 8 bits per pixel that Zstandard cannot shrink.
+          // RDO trades a little block noise for a stream that compresses; normal and
+          // roughness maps keep their channels and resolution.
+          ...(quality.textureEncoding === "etc1s-color"
+            ? ["--rdo", "--rdo-lambda", "2"]
+            : []),
           "--zstd",
           "18",
           "--jobs",
           "2",
         ],
-        {
-          ...BIG_OUTPUT,
-          env: {
-            ...process.env,
-            PATH: `${dirname(textureEncoder)}:${process.env.PATH}`,
-          },
-        },
+        encoderEnvironment,
       );
       packInput = texturePacked;
     }
@@ -805,7 +858,9 @@ export const convertMap = async ({
             mediaType: "model/gltf-binary",
             encoding:
               withTextures && textureCompression === "uastc"
-                ? "glb+meshopt+ktx2-uastc"
+                ? quality.textureEncoding === "etc1s-color"
+                  ? "glb+meshopt+ktx2-etc1s+uastc"
+                  : "glb+meshopt+ktx2-uastc"
                 : "glb+meshopt",
           },
         },

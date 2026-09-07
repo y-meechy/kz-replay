@@ -69,3 +69,48 @@ test("HDR encoding and explicit resizing preserve constant values above white", 
     );
   }
 });
+
+test("EXR skies downsample by linear box filter and stay half-float EXR", async () => {
+  const { downsampleExr } = await import("./hdrImage.js");
+  const three = await import("three");
+  const { EXRExporter, NO_COMPRESSION } =
+    await import("three/addons/exporters/EXRExporter.js");
+  const { EXRLoader } = await import("three/addons/loaders/EXRLoader.js");
+  const width = 8,
+    height = 4;
+  const data = new Float32Array(width * height * 4);
+  for (let i = 0; i < width * height; i++) {
+    // Left half radiance 2, right half radiance 6; alternating rows 0 and 4 in green.
+    data[i * 4] = i % width < width / 2 ? 2 : 6;
+    data[i * 4 + 1] = Math.floor(i / width) % 2 ? 4 : 0;
+    data[i * 4 + 3] = 1;
+  }
+  // Three's exporter writes broken ZIP scanlines for float input, so the fixture
+  // is uncompressed; the downsampled output is the half-float ZIP path under test.
+  const source = await new EXRExporter().parse(
+    new three.DataTexture(
+      data,
+      width,
+      height,
+      three.RGBAFormat,
+      three.FloatType,
+    ),
+    { type: three.FloatType, compression: NO_COMPRESSION },
+  );
+  const small = await downsampleExr(Buffer.from(source.buffer), 4);
+  assert.equal(small.width, 4);
+  assert.equal(small.height, 2);
+  const parsed = new EXRLoader()
+    .setDataType(three.FloatType)
+    .parse(
+      small.exr.buffer.slice(
+        small.exr.byteOffset,
+        small.exr.byteOffset + small.exr.byteLength,
+      ),
+    );
+  assert.equal(parsed.width, 4);
+  const px = (x, y, c) => parsed.data[(y * 4 + x) * 4 + c];
+  assert.equal(px(0, 0, 0), 2);
+  assert.equal(px(3, 0, 0), 6);
+  assert.equal(px(1, 1, 1), 2);
+});

@@ -7,7 +7,7 @@ import { Document, NodeIO } from "@gltf-transform/core";
 import { ALL_EXTENSIONS, KHRMaterialsUnlit } from "@gltf-transform/extensions";
 import { trimMap } from "./trimMap.js";
 import { publishMapAssets, publishedGeometryPath } from "./mapAssets.js";
-import { resolveMapQuality } from "./mapQuality.js";
+import { qualityReductions, resolveMapQuality } from "./mapQuality.js";
 
 test("fidelity conversion preserves foliage, source material/extension, tangents and colours", async () => {
   const dir = await mkdtemp(join(tmpdir(), "kz-fidelity-conversion-"));
@@ -123,11 +123,93 @@ test("immutable publication preserves old assets and never retains stale sidecar
   );
 });
 
-test("the default profile does not reduce detail or simplify geometry by file size", () => {
+test("the default web profile keeps scenery and only reduces resolution and encoding", () => {
   const defaults = resolveMapQuality();
+  assert.equal(defaults.profile, "web");
   assert.equal(defaults.dropFoliage, false);
-  assert.equal(defaults.textureSize, null);
-  assert.equal(defaults.lightmapSize, null);
+  assert.equal(defaults.preserveMorphTargets, true);
+  assert.equal(defaults.attributePolicy, "web");
+  assert.equal(defaults.textureSize, 1024);
+  assert.equal(defaults.textureEncoding, "etc1s-color");
+  assert.equal(defaults.lightmapSize, 4096);
+  assert.equal(defaults.skySize, 2048);
   assert.equal(defaults.simplifyError, null);
+  assert.deepEqual(qualityReductions(defaults), [
+    "vertex-attributes",
+    "textures-max-1024",
+    "textures-etc1s-color",
+    "lightmap-4096",
+    "sky-2048",
+  ]);
+  const fidelity = resolveMapQuality({ profile: "fidelity" });
+  assert.equal(fidelity.textureSize, null);
+  assert.equal(fidelity.lightmapSize, null);
+  assert.equal(fidelity.skySize, null);
+  assert.deepEqual(qualityReductions(fidelity), []);
   assert.equal(resolveMapQuality({ profile: "legacy" }).dropFoliage, true);
+  assert.equal(resolveMapQuality({ skySize: 512 }).skySize, 512);
+  assert.throws(() => resolveMapQuality({ skySize: 0 }), TypeError);
+});
+
+test("the web attribute policy drops what the browser never reads and keeps referenced UV sets", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "kz-web-attributes-"));
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const attribute = (type, values) =>
+    doc
+      .createAccessor()
+      .setType(type)
+      .setArray(new Float32Array(values))
+      .setBuffer(buffer);
+  const uv = () => attribute("VEC2", new Array(6).fill(0.25));
+  const texture = doc
+    .createTexture("t")
+    .setMimeType("image/png")
+    .setImage(new Uint8Array([137, 80, 78, 71]));
+  const material = doc.createMaterial("m").setBaseColorTexture(texture);
+  material.getBaseColorTextureInfo().setTexCoord(2);
+  const primitive = doc
+    .createPrimitive()
+    .setAttribute("POSITION", attribute("VEC3", new Array(9).fill(1)))
+    .setAttribute("NORMAL", attribute("VEC3", new Array(9).fill(1)))
+    .setAttribute("TANGENT", attribute("VEC4", new Array(12).fill(1)))
+    .setAttribute("COLOR_0", attribute("VEC4", new Array(12).fill(1)))
+    .setAttribute("TEXCOORD_0", uv())
+    .setAttribute("TEXCOORD_1", uv())
+    .setAttribute("TEXCOORD_2", uv())
+    .setAttribute("TEXCOORD_3", uv())
+    .setAttribute("_TEXCOORD_4", uv())
+    .setMaterial(material);
+  doc
+    .createScene()
+    .addChild(
+      doc.createNode().setMesh(doc.createMesh("wall").addPrimitive(primitive)),
+    );
+  const io = new NodeIO().registerExtensions(ALL_EXTENSIONS);
+  await io.write(join(dir, "raw.glb"), doc);
+  const report = await trimMap({
+    input: join(dir, "raw.glb"),
+    output: join(dir, "trim.glb"),
+    attributePolicy: "web",
+    withTextures: true,
+    lightmap: { irradiance: { width: 4, height: 4 } },
+  });
+  assert.deepEqual(report.attributesDropped, [
+    "TANGENT",
+    "TEXCOORD_3",
+    "_TEXCOORD_4",
+  ]);
+  const p = (await io.read(join(dir, "trim.glb")))
+    .getRoot()
+    .listMeshes()[0]
+    .listPrimitives()[0];
+  assert.deepEqual(p.listSemantics().sort(), [
+    "COLOR_0",
+    "NORMAL",
+    "POSITION",
+    "TEXCOORD_0",
+    "TEXCOORD_1",
+    "TEXCOORD_2",
+  ]);
+  assert.equal(p.getExtras().kzLightmapUv, 1);
 });
