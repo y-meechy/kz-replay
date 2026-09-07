@@ -5,9 +5,11 @@ geometry and surface textures, linear HDR irradiance, independent direct-shadow
 channels, and an HDR sky when available. Conversion uses
 [ValveResourceFormat / Source 2 Viewer](https://github.com/ValveResourceFormat/ValveResourceFormat).
 
-The fidelity branch is under validation. Full-resolution bundles are currently large
-and have **not** met the playback-performance acceptance gate. Do not bulk reconvert
-or deploy based on unit tests alone. See [the evidence log](fidelity-log.md) and
+The default `web` profile is what a browser downloads. The full-resolution `fidelity`
+profile is a diagnostic reference: on kz_grotto it produced a 347 MB GLB beside a
+94 MB sky and 84–158 MB of lighting, which stalled or failed to load in the deployed
+viewer. Do not bulk reconvert or deploy based on unit tests alone. See
+[the evidence log](fidelity-log.md) and
 [the capture/benchmark instructions](fidelity-capture.md).
 
 ## Tools
@@ -35,10 +37,21 @@ node bin/kzreplay.js map kz_grotto --workshop-id 3121168339 \
   --workshop-dir /path/to/workshop/content/730/3121168339 --keep-work
 ```
 
-The fidelity profile retains foliage, tangents, vertex colours, secondary UVs,
-morph targets and source material properties. File size does not trigger automatic
-simplification. `--profile legacy` explicitly selects the old geometry/texture
-reductions; it does **not** recreate the old tone-mapping pipeline.
+Three named profiles; every reduction is recorded in the manifest's `audit.dropped`:
+
+- `web` (default) keeps every mesh, material, vertex colour and lightmap UV, and
+  reduces only resolution and encoding: colour textures capped at 1024 as ETC1S,
+  normal/roughness/occlusion data capped at 512 as UASTC; tangents,
+  exporter-private and unreferenced UV sets dropped (Three derives tangents in
+  the shader); the lighting atlas at the compiler's authored 4096 mip, whose
+  native BC6H blocks ship unchanged, with the RGBM fallback and shadow atlas as
+  lossless WebP; the HDR sky box-filtered to 2048×1024 half-float EXR.
+- `fidelity` retains source resolution and every stream. Use it for comparison
+  captures, not for publication. File size never triggers simplification.
+- `legacy` explicitly selects the old geometry/texture reductions; it does **not**
+  recreate the old tone-mapping pipeline.
+
+`--texture-size`, `--lightmap-size` and `--sky-size` override a profile's values.
 `--texture-compression source` retains source PNGs for compression comparisons.
 
 1. Extract Workshop content, read world material references, and borrow missing
@@ -49,8 +62,9 @@ reductions; it does **not** recreate the old tone-mapping pipeline.
    extensions, and atlas UV scale for exporter revisions known not to bake it.
    Unknown exporters with non-unit scale require an explicit
    `--exporter-lightmap-uvs source|baked` choice.
-5. Encode surface textures to UASTC KTX2 with mipmaps, then pack geometry using
-   meshopt. A later texture transform would decode meshopt again.
+5. Resize textures to the profile caps, encode colour to ETC1S and data maps to
+   UASTC KTX2 with mipmaps, then pack geometry using meshopt. A later texture
+   transform would decode meshopt again.
 6. Publish a complete immutable revision directory, then atomically switch
    `<map>.assets.json`. Existing revisions and root legacy assets remain untouched.
 
@@ -64,7 +78,7 @@ An immutable revision GLB URL uses its sibling manifest for comparison or rollba
 Pipeline 3 preserves supported unsigned BC6H irradiance blocks and authored mips in
 a version-1 `.bc6` container, without decoding/recompressing their radiance. On
 WebGL devices with BPTC support, the viewer loads this native atlas. Other devices
-retain the full-resolution, explicitly ranged RGBM8 PNG fallback. A failed native
+retain the same-resolution, explicitly ranged RGBM8 lossless-WebP fallback. A failed native
 download also uses that same-generation fallback and records the reason in debug
 output. No resolution reduction is hidden behind capability selection.
 
@@ -74,7 +88,7 @@ This correction does not apply to equirectangular skies, whose north pole maps t
 v=1 in Three. See [native-HDR validation](fidelity/native-hdr.md).
 
 Neither path tone-maps during conversion. Native BC6H preserves the original engine
-quantization and filters linear radiance. PNG losslessness does not make RGBM
+quantization and filters linear radiance. WebP losslessness does not make RGBM
 quantization or interpolation lossless; fallback filtering remains a known gap.
 
 Direct-shadow RGBA contains four independent shadow amounts, not colour plus opacity.

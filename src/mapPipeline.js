@@ -597,7 +597,7 @@ export const convertMap = async ({
     log(
       quality.profile === "fidelity"
         ? "preparing geometry without visual-data reduction…"
-        : "applying explicit legacy reductions…",
+        : `applying the ${quality.profile} profile's recorded reductions…`,
     );
     const trimmed = containedPath(exportDir, "world.trimmed.glb");
     const trim = await trimMap({
@@ -704,6 +704,25 @@ export const convertMap = async ({
         );
         packInput = colourPacked;
       }
+      if (quality.dataTextureSize) {
+        // Only the textures still uncompressed are touched: the resize skips KTX2,
+        // so this reaches exactly the data maps the colour pass left behind.
+        const resized = containedPath(exportDir, "world.resized-data.glb");
+        await run(
+          optimizer,
+          [
+            "resize",
+            packInput,
+            resized,
+            "--width",
+            String(quality.dataTextureSize),
+            "--height",
+            String(quality.dataTextureSize),
+          ],
+          BIG_OUTPUT,
+        );
+        packInput = resized;
+      }
       const texturePacked = containedPath(exportDir, "world.textures.glb");
       await run(
         optimizer,
@@ -713,12 +732,6 @@ export const convertMap = async ({
           texturePacked,
           "--level",
           "2",
-          // Plain UASTC is a fixed 8 bits per pixel that Zstandard cannot shrink.
-          // RDO trades a little block noise for a stream that compresses; normal and
-          // roughness maps keep their channels and resolution.
-          ...(quality.textureEncoding === "etc1s-color"
-            ? ["--rdo", "--rdo-lambda", "2"]
-            : []),
           "--zstd",
           "18",
           "--jobs",
@@ -802,15 +815,15 @@ export const convertMap = async ({
     const geometry = packed?.path ?? raw;
     await validateGlb(geometry);
 
-    const lightSource = containedPath(exportDir, "light.rgbm.png");
+    const lightSource = containedPath(exportDir, "light.rgbm.webp");
     const compressedLightSource = containedPath(exportDir, "light.bc6");
-    const shadowSource = containedPath(exportDir, "light.shadows.png");
+    const shadowSource = containedPath(exportDir, "light.shadows.webp");
     const skySource = containedPath(
       exportDir,
       sky?.exr ? "sky.exr" : "sky.webp",
     );
     if (lightmap?.irradiance && trim.lightmap?.lit > 0) {
-      await writeFile(lightSource, lightmap.irradiance.png);
+      await writeFile(lightSource, lightmap.irradiance.image);
     }
     if (lightmap?.irradianceCompressed && trim.lightmap?.lit > 0) {
       await writeFile(
@@ -818,7 +831,8 @@ export const convertMap = async ({
         lightmap.irradianceCompressed.data,
       );
     }
-    if (lightmap?.shadows) await writeFile(shadowSource, lightmap.shadows.png);
+    if (lightmap?.shadows)
+      await writeFile(shadowSource, lightmap.shadows.image);
     if (sky?.exr) await writeFile(skySource, sky.exr);
     else if (sky?.webp) await writeFile(skySource, sky.webp);
 
@@ -868,9 +882,9 @@ export const convertMap = async ({
           lightmap?.irradiance && trim.lightmap?.lit > 0
             ? {
                 sourcePath: lightSource,
-                fileName: `${mapName}.light.rgbm.png`,
+                fileName: `${mapName}.light.rgbm.webp`,
                 metadata: {
-                  mediaType: "image/png",
+                  mediaType: "image/webp",
                   encoding: "rgbm8-linear",
                   colorSpace: "linear",
                   range: lightmap.irradiance.range,
@@ -897,9 +911,9 @@ export const convertMap = async ({
         lightmapShadows: lightmap?.shadows
           ? {
               sourcePath: shadowSource,
-              fileName: `${mapName}.light.shadows.png`,
+              fileName: `${mapName}.light.shadows.webp`,
               metadata: {
-                mediaType: "image/png",
+                mediaType: "image/webp",
                 encoding: "rgba8-shadow-amount",
                 colorSpace: "linear",
                 channels: "rgba",

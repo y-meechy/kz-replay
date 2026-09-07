@@ -131,6 +131,7 @@ test("the default web profile keeps scenery and only reduces resolution and enco
   assert.equal(defaults.attributePolicy, "web");
   assert.equal(defaults.textureSize, 1024);
   assert.equal(defaults.textureEncoding, "etc1s-color");
+  assert.equal(defaults.dataTextureSize, 512);
   assert.equal(defaults.lightmapSize, 4096);
   assert.equal(defaults.skySize, 2048);
   assert.equal(defaults.simplifyError, null);
@@ -138,6 +139,7 @@ test("the default web profile keeps scenery and only reduces resolution and enco
     "vertex-attributes",
     "textures-max-1024",
     "textures-etc1s-color",
+    "data-textures-max-512",
     "lightmap-4096",
     "sky-2048",
   ]);

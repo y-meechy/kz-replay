@@ -154,10 +154,12 @@ export const encodeRgbmImage = async ({
     );
   }
   return {
-    png: await sharp(rgba, {
+    // Lossless WebP: the same bytes as PNG after decoding, at about half the size
+    // (Grotto's 4096² atlas: 44.4 MB PNG, 23.9 MB WebP).
+    image: await sharp(rgba, {
       raw: { width: targetWidth, height: targetHeight, channels: 4 },
     })
-      .png({ compressionLevel: 9 })
+      .webp({ lossless: true, effort: 6 })
       .toBuffer(),
     width: targetWidth,
     height: targetHeight,

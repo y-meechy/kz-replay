@@ -243,7 +243,7 @@ export const buildLightmap = async ({
         metadata.height === source.height
       ) {
         shadows = {
-          png: await encodeShadowChannels(
+          image: await encodeShadowChannels(
             shadowPath,
             irradiance.width,
             irradiance.height,
@@ -281,7 +281,10 @@ export const buildLightmap = async ({
 export const encodeShadowChannels = async (path, width, height) => {
   const metadata = await sharp(path).metadata();
   if (metadata.width === width && metadata.height === height) {
-    return sharp(path).ensureAlpha().png({ compressionLevel: 9 }).toBuffer();
+    return sharp(path)
+      .ensureAlpha()
+      .webp({ lossless: true, effort: 6 })
+      .toBuffer();
   }
   const channels = await Promise.all(
     [0, 1, 2, 3].map(async (channel) => {
@@ -306,6 +309,6 @@ export const encodeShadowChannels = async (path, width, height) => {
     for (let c = 0; c < 4; c++) pixels[i * 4 + c] = channels[c][i];
   }
   return sharp(pixels, { raw: { width, height, channels: 4 } })
-    .png({ compressionLevel: 9 })
+    .webp({ lossless: true, effort: 6 })
     .toBuffer();
 };

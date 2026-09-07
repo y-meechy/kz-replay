@@ -15,7 +15,7 @@ test("EXR irradiance restores Source row order while PNG input keeps its rows", 
       decode: (v) => v,
       flipRows,
     });
-    const pixels = await sharp(result.png).raw().toBuffer();
+    const pixels = await sharp(result.image).raw().toBuffer();
     const decoded = Array.from({ length: 2 }, (_, i) =>
       [0, 1, 2].map(
         (c) =>
@@ -60,7 +60,7 @@ test("HDR encoding and explicit resizing preserve constant values above white", 
       targetWidth,
       targetHeight: targetWidth,
     });
-    const pixels = await sharp(result.png).raw().toBuffer();
+    const pixels = await sharp(result.image).raw().toBuffer();
     const decoded = [0, 1, 2].map(
       (c) => (((pixels[c] / 255) * pixels[3]) / 255) * result.range,
     );

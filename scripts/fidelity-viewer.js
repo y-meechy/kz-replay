@@ -151,4 +151,6 @@ window.fidelity = {
   dispose() {
     player?.dispose();
   },
+  /** The live player, for ad-hoc inspection of loaded materials and textures. */
+  player: () => player,
 };

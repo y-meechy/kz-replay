@@ -13,8 +13,10 @@ const PROFILES = {
     preserveMorphTargets: true,
     textureSize: 1024,
     // ETC1S for colour: ~1 bit per pixel and it transcodes to every GPU. Normal,
-    // roughness and occlusion data keep UASTC, with rate-distortion optimisation
-    // so Zstandard has something to compress.
+    // roughness and occlusion data keep UASTC, which ETC1S would visibly quantise,
+    // at half the colour resolution: UASTC is a fixed 8 bits per pixel, so the 65
+    // Grotto normal maps were 46 MB at 1024 and are 14 MB at 512.
+    dataTextureSize: 512,
     textureEncoding: "etc1s-color",
     lightmapSize: 4096,
     skySize: 2048,
@@ -24,6 +26,7 @@ const PROFILES = {
     attributePolicy: "all",
     preserveMorphTargets: true,
     textureSize: null,
+    dataTextureSize: null,
     textureEncoding: "uastc",
     lightmapSize: null,
     skySize: null,
@@ -33,6 +36,7 @@ const PROFILES = {
     attributePolicy: "legacy",
     preserveMorphTargets: false,
     textureSize: 256,
+    dataTextureSize: null,
     textureEncoding: "uastc",
     lightmapSize: 1024,
     skySize: 1024,
@@ -88,6 +92,9 @@ export const qualityReductions = (settings) => [
   ...(settings.textureSize ? [`textures-max-${settings.textureSize}`] : []),
   ...(settings.textureEncoding === "etc1s-color"
     ? ["textures-etc1s-color"]
+    : []),
+  ...(settings.dataTextureSize
+    ? [`data-textures-max-${settings.dataTextureSize}`]
     : []),
   ...(settings.lightmapSize ? [`lightmap-${settings.lightmapSize}`] : []),
   ...(settings.skySize ? [`sky-${settings.skySize}`] : []),
