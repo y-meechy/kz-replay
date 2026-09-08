@@ -98,22 +98,10 @@ const RULES = [
 export const DEFAULT_COLOUR = "#8a6647";
 
 /**
- * Surfaces that should not be drawn at all.
- *
- * Two kinds, for the same reason: in the game they are either invisible or nearly
- * so, and here they would be solid.
- *
- * Tool textures are the compiler's own — triggers, clips, skips — and are pure
- * collision. Effect surfaces are the flat cards a mapper hangs in the air for a
- * god ray, a light shaft or a puff of smoke. The game draws those at a few percent
- * opacity, additively. Nothing in this pipeline carries opacity: the exporter
- * cannot resolve the material that would have said so, and a glTF material with no
- * alpha is opaque. So a god ray that should be a faint shaft of light arrives as a
- * solid slab hanging across the level, which is exactly what a mapper notices
- * first. Dropping them is closer to right than drawing them at full strength.
+ * Surfaces that should not be drawn at all: the compiler's own tool textures —
+ * triggers, clips, skips — which are pure collision and would be solid here.
  */
 const INVISIBLE = [
-  // Compiler tools.
   "toolsclip",
   "toolstrigger",
   "toolsskip",
@@ -121,7 +109,18 @@ const INVISIBLE = [
   "toolsinvisible",
   "toolsblocklight",
   "toolssolidblocklight",
-  // Effects, which are translucent cards in the game and slabs without opacity.
+];
+
+/**
+ * Effect surfaces: the flat cards a mapper hangs in the air for a god ray, a light
+ * shaft or a puff of smoke. The game draws them at a few percent opacity, but the
+ * exporter cannot resolve the material that would have said so, and a glTF material
+ * with no alpha is opaque. Left alone, a god ray arrives as a solid slab hanging
+ * across the level. trimMap.js gives these EFFECT_ALPHA instead.
+ */
+const EFFECTS = [
+  // The zone beams and light shafts mappers build from a fading gradient card.
+  "gradient",
   "godray",
   "godrays",
   "god_ray",
@@ -180,9 +179,16 @@ const COMPILED = RULES.map(([words, hex]) => ({
 }));
 
 const INVISIBLE_PATTERN = boundedPattern(INVISIBLE);
+const EFFECT_PATTERN = boundedPattern(EFFECTS);
 
 /** True for a material that the game never draws. */
 export const isInvisibleMaterial = (name) => INVISIBLE_PATTERN.test(name ?? "");
+
+/** True for a translucent effect card (god ray, smoke, glow). */
+export const isEffectMaterial = (name) => EFFECT_PATTERN.test(name ?? "");
+
+/** Faint enough to read as light, not a wall. */
+export const EFFECT_ALPHA = 0.12;
 
 /**
  * Pick a colour for one material path or mesh name.

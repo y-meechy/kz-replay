@@ -9,7 +9,12 @@ import sharp from "sharp";
 import { NodeIO } from "@gltf-transform/core";
 import { ALL_EXTENSIONS } from "@gltf-transform/extensions";
 import { dedup, prune } from "@gltf-transform/functions";
-import { colourFor, isInvisibleMaterial } from "./mapColours.js";
+import {
+  colourFor,
+  isInvisibleMaterial,
+  isEffectMaterial,
+  EFFECT_ALPHA,
+} from "./mapColours.js";
 import { normaliseMeshName } from "./mapMaterialNames.js";
 import { repairSourceMaterialAlpha } from "./sourceMaterialRepair.js";
 
@@ -297,18 +302,32 @@ export const trimMap = async ({
   // map has two per colour: the surfaces that carry an atlas UV, and the handful
   // that do not and can only be flat.
   const paletteByHex = new Map();
-  const colourMaterial = ({ hex, linear }, lit) => {
-    const key = lit ? `${hex}+lit` : hex;
+  const colourMaterial = ({ hex, linear }, lit, alpha = 1) => {
+    const key = `${hex}${lit ? "+lit" : ""}${alpha < 1 ? "+fx" : ""}`;
     let material = paletteByHex.get(key);
     if (!material) {
       material = document
         .createMaterial(`kz_${hex.slice(1)}`)
-        .setBaseColorFactor([...linear, 1])
+        .setBaseColorFactor([...linear, alpha])
         .setRoughnessFactor(1)
         .setMetallicFactor(0);
+      if (alpha < 1) {
+        // Glow like a light rather than a tinted pane.
+        makeTranslucent(material, alpha);
+        material.setEmissiveFactor(linear);
+      }
       paletteByHex.set(key, material);
     }
     return material;
+  };
+
+  // A god ray is a card seen from both sides that the game draws almost see-through.
+  const makeTranslucent = (material, alpha) => {
+    const [r, g, b] = material.getBaseColorFactor();
+    material
+      .setBaseColorFactor([r, g, b, alpha])
+      .setAlphaMode("BLEND")
+      .setDoubleSided(true);
   };
 
   const dropMesh = (mesh, meshTriangles) => {
@@ -345,6 +364,7 @@ export const trimMap = async ({
       dropMesh(mesh, meshTriangles);
       continue;
     }
+    const effect = Boolean(materialNames) && isEffectMaterial(describedBy);
 
     for (const primitive of mesh.listPrimitives()) {
       // Props are model instances rather than world geometry, and they were lit at
@@ -415,16 +435,57 @@ export const trimMap = async ({
           //
           // The colour guessed from the surface's name is what an untextured map would
           // have given it, so that is what they fall back to.
-          primitive.setMaterial(colourMaterial(colourFor(describedBy), false));
+          primitive.setMaterial(
+            colourMaterial(
+              colourFor(describedBy),
+              false,
+              effect ? EFFECT_ALPHA : 1,
+            ),
+          );
           untexturedSurfaces += 1;
         }
       } else if (materialNames) {
-        const colour = colourFor(describedBy);
-        primitive.setMaterial(colourMaterial(colour, lit));
+        // An effect card nothing names a colour for is light, not the ground's brown.
+        const guessed = colourFor(describedBy);
+        const colour = effect && !guessed.rule ? colourFor("white") : guessed;
+        primitive.setMaterial(
+          colourMaterial(colour, lit, effect ? EFFECT_ALPHA : 1),
+        );
         colouredNamed += named ? 1 : 0;
         colouredMatched += colour.rule ? 1 : 0;
         colouredTotal += 1;
       }
+    }
+  }
+
+  // The mapper's shader flags say which surfaces are see-through: god rays, light
+  // shafts, start and end zone beams. glTF only carries that as texture alpha, and
+  // when the exporter could not decode the texture (kz_niche's gradient card) the
+  // material lands as an opaque slab. Give every translucent source material whose
+  // alpha was not proven a faint, glowing tint instead.
+  let translucentEffects = 0;
+  if (withTextures) {
+    const restored = new Set(
+      (sourceMaterialRepairs?.restored ?? []).map((entry) => entry.material),
+    );
+    for (const material of importedMaterials) {
+      const vmat = material.getExtras().vmat;
+      const flags = vmat?.IntParams ?? {};
+      if (!(flags.F_TRANSLUCENT || flags.F_ADDITIVE_BLEND)) continue;
+      if (restored.has(material.getName())) continue;
+      const [r, g, b] = vmat.VectorParams?.g_vColorTint ?? [1, 1, 1];
+      // A placeholder fill carries nothing worth keeping, and prune() folds a shared
+      // solid texture into every material's factors with the wrong values.
+      const filled = (texture) =>
+        texture && texturesFilledIn.includes(texture.getURI());
+      if (filled(material.getBaseColorTexture()))
+        material.setBaseColorTexture(null);
+      if (filled(material.getEmissiveTexture()))
+        material.setEmissiveTexture(null);
+      material.setBaseColorFactor([r, g, b, 1]);
+      makeTranslucent(material, EFFECT_ALPHA);
+      if (flags.F_SELF_ILLUM) material.setEmissiveFactor([r, g, b]);
+      translucentEffects += 1;
     }
   }
 
@@ -467,6 +528,7 @@ export const trimMap = async ({
 
   return {
     sourceMaterialRepairs,
+    translucentEffects,
     attributePolicy,
     meshesBefore,
     meshesRetained: meshesBefore - meshesRemoved,
