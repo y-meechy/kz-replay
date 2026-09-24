@@ -23,6 +23,9 @@ services:
       # rather than in the image: a part is about 105 MB and re-downloading the set on
       # every deploy would be pure waste.
       KZ_CS2_DIR: /data/cs2
+      # Lets our game servers upload replays for review (docs/api.md). Set in the
+      # untracked .env next to this file; unset, uploads are refused.
+      KZ_ANALYSIS_TOKEN: ${KZ_ANALYSIS_TOKEN:-}
     volumes:
       - /var/lib/kz-replay:/data
     restart: unless-stopped

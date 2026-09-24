@@ -32,6 +32,7 @@ import { writeJsonAtomically } from "../src/geometry.js";
 import { convertPlayerModel } from "../src/playerModelPipeline.js";
 import { refresh } from "../src/refresh.js";
 import { createViewCounter, handleViewsRequest } from "../src/views.js";
+import { createAnalyses } from "./analyses.js";
 import { createReplayProxy } from "./replayProxy.js";
 
 const integerFromEnv = (name, fallback, { min, max }) => {
@@ -194,6 +195,15 @@ const proxyReplay = createReplayProxy({
   log: (message) => log(message),
 });
 
+// Uploads need the token; a deploy without KZ_ANALYSIS_TOKEN simply refuses them.
+const handleAnalyses = createAnalyses({
+  stateDir: STATE_DIR,
+  replayCacheDir: REPLAY_CACHE_DIR,
+  token: process.env.KZ_ANALYSIS_TOKEN ?? "",
+  maxBytes: REPLAY_MAX_BYTES,
+  log: (message) => log(message),
+});
+
 // --- the nightly job --------------------------------------------------------
 //
 // setTimeout rather than a cron library: one dependency fewer, and the only thing
@@ -341,9 +351,10 @@ const refreshWorldRecordFeed = async () => {
 // --- routing ----------------------------------------------------------------
 
 const handle = async (request, response) => {
-  // The view counter is the only thing here that accepts a POST, so it is routed
-  // before the method check rather than after it.
+  // The view counter and the run reviews are the only things here that accept a
+  // POST, so they are routed before the method check rather than after it.
   if (await handleViewsRequest(request, response, views)) return;
+  if (await handleAnalyses(request, response)) return;
 
   if (request.method !== "GET" && request.method !== "HEAD") {
     response.writeHead(405, { allow: "GET, HEAD" });
