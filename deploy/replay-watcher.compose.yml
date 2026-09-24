@@ -1,0 +1,15 @@
+# The run review watcher, next to a CS2KZ server. See docs/api.md#run-reviews.
+services:
+  replay-watcher:
+    image: node:24-alpine
+    command: ["node", "/app/replayWatcher.js"]
+    environment:
+      KZ_WATCH_DIR: /replays
+      KZ_API_URL: ${KZ_API_URL:-https://demo.kzcomp.com}
+      KZ_ANALYSIS_TOKEN: ${KZ_ANALYSIS_TOKEN:?set KZ_ANALYSIS_TOKEN in .env}
+      KZ_WATCH_STATE: /state/uploaded.json
+    volumes:
+      - ./replayWatcher.js:/app/replayWatcher.js:ro
+      - ${KZ_WATCH_DIR:?set KZ_WATCH_DIR in .env}:/replays:ro
+      - ./state:/state
+    restart: unless-stopped
