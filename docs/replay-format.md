@@ -13,6 +13,12 @@ section           CmdData, CmdSubtickData    (skipped)
 Each section is `u32 compressedSize, u32 uncompressedSize, u32 elementCount` and
 one zstd frame.
 
+Up to version 5 the Events section is a raw array of fixed-size `RpEvent` structs.
+Version 6 changed only that section: each event is a `u32` length followed by a
+`ReplayEvent` protobuf message, and checkpoint save/reset events were added. The
+tick, subtick, weapon, jump and cmd sections are byte-for-byte the same as
+version 5. The decoder must consume exactly the whole Events section too.
+
 Tick data is delta encoded: every tick starts with a `u64` change-flag mask, then
 carries only the fields that changed. Unchanged fields inherit from the previous
 tick, `pre` from the previous tick's `post`, and `post` from this tick's `pre`.
@@ -32,11 +38,11 @@ the check gives strong alignment evidence, but does not prove every format
 version, skipped section, or semantic rule is correct.
 
 Source of truth for the format is the plugin itself. The relevant
-[`src/kz/replays` files](https://github.com/KZGlobalTeam/cs2kz-metamod/tree/7bf63fd18f588bd69e91c9236eb44392be57ec11/src/kz/replays)
-and [`protobuf/kz_replay.proto`](https://github.com/KZGlobalTeam/cs2kz-metamod/blob/7bf63fd18f588bd69e91c9236eb44392be57ec11/protobuf/kz_replay.proto)
+[`src/kz/replays` files](https://github.com/KZGlobalTeam/cs2kz-metamod/tree/25f0cfa74ecebdcb44f660eeeccb4884ca7b6dd4/src/kz/replays)
+and [`protobuf/kz_replay.proto`](https://github.com/KZGlobalTeam/cs2kz-metamod/blob/25f0cfa74ecebdcb44f660eeeccb4884ca7b6dd4/protobuf/kz_replay.proto)
 are linked at an immutable upstream revision. The tick decoder is a JavaScript port
 of that AGPL-3.0-licensed implementation; the original C++ file is not vendored
-here. Format version 5 is the newest version this parser supports;
+here. Format version 6 is the newest version this parser supports;
 the parser refuses anything newer instead of guessing.
 
 ## Where the data comes from

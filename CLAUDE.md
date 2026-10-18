@@ -37,7 +37,7 @@ on each section's last byte) but does not replace the unit tests.
 - Plain ES modules, no TypeScript, no viewer framework. Prettier only.
 - Commits: short imperative sentences, no conventional-commit prefixes.
 - Comments explain _why_ (format quirks, bug that forced a check), not what.
-- Format version 5 is the max supported; parser refuses newer versions.
+- Format version 6 is the max supported; parser refuses newer versions.
 - Replay format source of truth: AGPL-3.0 cs2kz-metamod plugin; `src/ticks.js` ports its
   tick decoder. Keep the pinned upstream link and attribution in `docs/replay-format.md`
   and `docs/third-party-notices.md`.

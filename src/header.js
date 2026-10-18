@@ -11,7 +11,7 @@ export const REPLAY_TYPE = {
 };
 
 /** Newest format version this parser was written against. */
-export const MAX_SUPPORTED_VERSION = 5;
+export const MAX_SUPPORTED_VERSION = 6;
 
 const readPlayer = (fields) =>
   fields && {

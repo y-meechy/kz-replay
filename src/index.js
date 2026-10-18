@@ -28,7 +28,11 @@ export const parseReplay = (buffer) => {
   );
 
   const events = sections.events
-    ? decodeEvents(sections.events.data(), sections.events.elementCount)
+    ? decodeEvents(
+        sections.events.data(),
+        sections.events.elementCount,
+        header.version,
+      )
     : [];
 
   return {

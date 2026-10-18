@@ -1,9 +1,9 @@
 // Decode the Events section.
 //
-// `RpEvent` is a trivial fixed-size struct (static_assert in kz_replay.h), so the
-// section is just an array and the stride is uncompressedSize / elementCount.
-// We only care about timer events and teleports; mode and style changes carry a
-// 164-byte name blob we skip over.
+// Versions 1-5 store `RpEvent` as a trivial fixed-size struct, so the section is
+// just an array and the stride is uncompressedSize / elementCount. We only care
+// about timer events and teleports; mode and style changes carry a 164-byte name
+// blob we skip over.
 //
 //   u32 type            RpEventType
 //   u32 serverTick
@@ -12,11 +12,20 @@
 //     teleport { u8 hasOrigin, u8 hasAngles, u8 hasVelocity, pad, f32 origin[3], ... }
 //     ...
 //   }
+//
+// Version 6 replaced the struct dump with one `ReplayEvent` protobuf per event,
+// each behind a u32 length prefix (parsing.cpp, ReadEventsV6), and added
+// checkpoint events.
+
+import { decodeMessage, first, num, sub } from "./protobuf.js";
 
 const EVENT_TIMER = 0;
 const EVENT_MODE_CHANGE = 1;
 const EVENT_STYLE_CHANGE = 2;
 const EVENT_TELEPORT = 3;
+const EVENT_CHECKPOINT = 4;
+
+const PROTOBUF_EVENTS_VERSION = 6;
 
 export const TIMER_EVENT = {
   0: "start",
@@ -29,7 +38,94 @@ export const TIMER_EVENT = {
   7: "stage",
 };
 
-export const decodeEvents = (inflated, elementCount) => {
+export const decodeEvents = (inflated, elementCount, version) =>
+  version >= PROTOBUF_EVENTS_VERSION
+    ? decodeProtobufEvents(inflated, elementCount)
+    : decodeStructEvents(inflated, elementCount);
+
+// int32 fields are sign-extended to 64 bits on the wire, so -1 arrives as 2^64-1.
+const int32 = (fields, fieldNumber) => {
+  const value = first(fields, fieldNumber);
+  return typeof value === "bigint" ? Number(BigInt.asIntN(32, value)) : value;
+};
+
+const decodeProtobufEvent = (fields, type, serverTick) => {
+  switch (type) {
+    case EVENT_TIMER: {
+      const timer = sub(fields, 4);
+      if (!timer) return undefined;
+      return {
+        kind: "timer",
+        serverTick,
+        event: TIMER_EVENT[num(timer, 1)] ?? "unknown",
+        index: int32(timer, 2),
+        time: num(timer, 3),
+      };
+    }
+    case EVENT_TELEPORT:
+      return { kind: "teleport", serverTick };
+    case EVENT_MODE_CHANGE:
+      return { kind: "modeChange", serverTick };
+    case EVENT_STYLE_CHANGE:
+      return { kind: "styleChange", serverTick };
+    case EVENT_CHECKPOINT:
+      return { kind: "checkpoint", serverTick };
+    default:
+      return undefined;
+  }
+};
+
+const decodeProtobufEvents = (inflated, elementCount) => {
+  const view = new DataView(
+    inflated.buffer,
+    inflated.byteOffset,
+    inflated.byteLength,
+  );
+  const events = [];
+  let offset = 0;
+
+  for (let i = 0; i < elementCount; i++) {
+    if (offset + 4 > inflated.length) {
+      throw new Error(`events section ends inside event ${i}'s length prefix`);
+    }
+    const length = view.getUint32(offset, true);
+    offset += 4;
+    if (offset + length > inflated.length) {
+      throw new Error(
+        `event ${i} claims ${length} bytes, only ${inflated.length - offset} left`,
+      );
+    }
+    const fields = decodeMessage(inflated.subarray(offset, offset + length));
+    offset += length;
+
+    const type = num(fields, 1);
+    // Upstream keeps unknown or incomplete events as placeholders so run event
+    // indices stay valid, and gives one without a tick its predecessor's tick.
+    const serverTick = num(fields, 2) ?? events.at(-1)?.serverTick ?? 0;
+    const event = decodeProtobufEvent(fields, type, serverTick) ?? {
+      kind: "unknown",
+      serverTick,
+      type,
+    };
+    if (events.length > 0 && serverTick < events.at(-1).serverTick) {
+      throw new Error(
+        `event ${i} at tick ${serverTick} goes back in time from ${events.at(-1).serverTick}`,
+      );
+    }
+    events.push(event);
+  }
+
+  // Same invariant as the tick decoder: a length that is off by one shifts every
+  // later event and still decodes to something plausible.
+  if (offset !== inflated.length) {
+    throw new Error(
+      `events section desynced: decoded ${offset} of ${inflated.length} bytes`,
+    );
+  }
+  return events;
+};
+
+const decodeStructEvents = (inflated, elementCount) => {
   if (elementCount === 0) {
     return [];
   }

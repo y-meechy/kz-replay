@@ -17,7 +17,7 @@ The tick decoder is a JavaScript port of the replay implementation in
 [cs2kz-metamod](https://github.com/KZGlobalTeam/cs2kz-metamod), whose source is
 licensed under AGPL-3.0. The relevant implementation is linked
 at the immutable revision
-[`7bf63fd18f588bd69e91c9236eb44392be57ec11`](https://github.com/KZGlobalTeam/cs2kz-metamod/tree/7bf63fd18f588bd69e91c9236eb44392be57ec11/src/kz/replays).
+[`25f0cfa74ecebdcb44f660eeeccb4884ca7b6dd4`](https://github.com/KZGlobalTeam/cs2kz-metamod/tree/25f0cfa74ecebdcb44f660eeeccb4884ca7b6dd4/src/kz/replays).
 The original C++ source file is not vendored in this repository. This repository
 uses AGPL-3.0-only consistently with that port's upstream license.
 
