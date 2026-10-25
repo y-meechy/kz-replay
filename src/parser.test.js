@@ -70,3 +70,44 @@ test("skips an oversized subtick section without weakening lazy inflation limits
     /section "subticks" claims 620784920 bytes uncompressed, refusing/,
   );
 });
+
+// Version 7 widened section headers to u64 and writes one zstd frame per
+// recording piece. Two one-tick frames make a two-tick section.
+const syntheticV7Replay = ({ uncompressedSize = 16 } = {}) => {
+  const header = Buffer.from([0x08, 0x07]);
+  // Unlike the frame above, this one records its content size, as ZSTD_compress
+  // always does and the v7 frame walk requires.
+  const tickFrame = Buffer.from("KLUv/SAIQQAAAAAAAAAAAAA=", "base64");
+  const frames = Buffer.concat([tickFrame, tickFrame]);
+  const section = Buffer.alloc(24);
+  section.writeBigUInt64LE(BigInt(frames.length), 0);
+  section.writeBigUInt64LE(BigInt(uncompressedSize), 8);
+  section.writeBigUInt64LE(2n, 16);
+  const length = Buffer.alloc(4);
+  length.writeUInt32LE(header.length);
+  const bytes = Buffer.concat([length, header, section, frames]);
+  return bytes.buffer.slice(
+    bytes.byteOffset,
+    bytes.byteOffset + bytes.byteLength,
+  );
+};
+
+test("reads v7 wide section headers over several zstd frames", () => {
+  const replay = parseReplay(syntheticV7Replay());
+
+  assert.equal(replay.header.version, 7);
+  assert.equal(replay.ticks.count, 2);
+  assert.deepEqual(replay.sectionSizes.ticks, {
+    compressed: 34,
+    uncompressed: 16,
+    elements: 2,
+  });
+  assert.equal(openReplay(syntheticV7Replay()).trailingBytes, 0);
+});
+
+test("refuses v7 frames that do not add up to the section header", () => {
+  assert.throws(
+    () => parseReplay(syntheticV7Replay({ uncompressedSize: 17 })),
+    /frames hold 16 bytes, header says 17/,
+  );
+});
