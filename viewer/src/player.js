@@ -258,6 +258,11 @@ export const createPlayer = ({
   onFrame,
   trimTeleports = false,
   mode = "vanilla",
+  // Seconds per frame when recording a video. Set, the clock stops following the
+  // wall clock and there is no animation loop: each renderFrame() call moves the
+  // run on by exactly this much, so a frame that takes a second to draw and save
+  // still plays back at real speed.
+  fixedStep = null,
 }) => {
   const renderer = new THREE.WebGLRenderer({
     canvas,
@@ -1484,7 +1489,7 @@ export const createPlayer = ({
   const render = () => {
     if (disposed) return;
     const now = performance.now();
-    const delta = Math.min((now - lastTime) / 1000, 0.25);
+    const delta = fixedStep ?? Math.min((now - lastTime) / 1000, 0.25);
     lastTime = now;
 
     if (playing) {
@@ -1619,12 +1624,13 @@ export const createPlayer = ({
       cameraMode,
     });
 
-    requestAnimationFrame(render);
+    if (!fixedStep) requestAnimationFrame(render);
   };
 
-  requestAnimationFrame(render);
+  if (!fixedStep) requestAnimationFrame(render);
 
   return {
+    renderFrame: render,
     speedCeiling,
     loadMap,
     setRival,

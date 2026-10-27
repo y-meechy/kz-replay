@@ -14,6 +14,7 @@ node bin/kzreplay.js verify --limit 60   # parse real replays; key parser integr
 node bin/kzreplay.js wrs --limit 6   # download classic world records
 node bin/kzreplay.js map <name>      # convert a map (local tools, docs/maps.md)
 npm run build && npm start           # production build + server
+npm run record -- --seconds 30       # film the newest WR to an MP4 (scripts/record-run.js)
 ```
 
 Real replay fixtures live in `samples/`. Run `npm run hooks:install` once to

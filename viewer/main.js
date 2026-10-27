@@ -51,6 +51,12 @@ const VIEW_NAMES = Object.fromEntries(
 );
 const DEFAULT_VIEW = "pov";
 
+// ?record=<fps> turns a watch page into a film set for scripts/record-run.js: the
+// clock steps one frame per renderFrame() call, the controls go, and the visit is
+// not counted, since nobody watched it.
+const RECORD_FPS = Number(new URLSearchParams(location.search).get("record"));
+document.body.classList.toggle("is-recording", RECORD_FPS > 0);
+
 /**
  * How many record ids one link may carry.
  *
@@ -819,8 +825,9 @@ const openRun = async (
       // How the runner stands: CS2KZ hands out a USP in classic and a knife in vanilla, and
       // the two are posed differently.
       mode: run.meta.mode,
+      fixedStep: RECORD_FPS > 0 ? 1 / RECORD_FPS : null,
     });
-    if (import.meta.env.DEV) window.__kzPlayer = player;
+    if (import.meta.env.DEV || RECORD_FPS > 0) window.__kzPlayer = player;
 
     watchRunner.textContent = run.meta.player?.name ?? "unknown runner";
     skipTpToggle.checked = false;
@@ -831,13 +838,14 @@ const openRun = async (
     fetchViews([recordId]).then(({ views }) => {
       if (token === loadToken) showWatchViews(views[recordId] ?? 0);
     });
-    viewTicker = createViewTicker({
-      recordId,
-      duration: run.meta.reportedTime ?? run.track.durationSeconds,
-      onCounted: (count) => {
-        if (token === loadToken) showWatchViews(count);
-      },
-    });
+    if (!RECORD_FPS)
+      viewTicker = createViewTicker({
+        recordId,
+        duration: run.meta.reportedTime ?? run.track.durationSeconds,
+        onCounted: (count) => {
+          if (token === loadToken) showWatchViews(count);
+        },
+      });
 
     showPlaying(true);
     setActiveButton(rates, "rate", "1");

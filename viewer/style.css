@@ -1989,3 +1989,17 @@ body {
     min-height: 46px;
   }
 }
+
+/* ?record: only the run, the name and the HUD go on film. Hidden, not removed:
+   the HUD sits on the controls' measured height, and a removed bar measures as
+   the whole screen. Transitions run on the wall clock, which a recording steps
+   past frame by frame, so they are cut too. */
+.is-recording
+  :is(.controls, .stats-toggle, .panel, .watch-views, .active-pov, .loading) {
+  visibility: hidden !important;
+}
+
+.is-recording * {
+  transition: none !important;
+  animation: none !important;
+}
