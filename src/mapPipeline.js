@@ -203,6 +203,10 @@ const cleanupConversionArtifacts = async ({
       recursive: true,
       force: true,
     }),
+    rm(containedPath(steamRoot, "depot", workshopId), {
+      recursive: true,
+      force: true,
+    }),
   ]);
 };
 
@@ -324,8 +328,41 @@ export const convertMap = async ({
     await mkdir(workDir, { recursive: true });
 
     // 1 + 2. Download the workshop item.
+    //
+    // DepotDownloader first, steamcmd as the fallback. steamcmd updates itself on
+    // every fresh container, and a self-updated build has failed every anonymous
+    // Workshop download with "I/O Operation Failed" while DepotDownloader, pinned in
+    // the image, fetched the same items fine.
     log(`downloading workshop item ${workshopId} (anonymous)…`);
-    if (!workshopDir)
+    const depotItemDir = containedPath(steamRoot, "depot", workshopId);
+    const hasVpk = async (dir) =>
+      existsSync(dir) &&
+      (await readdir(dir)).some((file) => file.endsWith(".vpk"));
+    let itemDir = workshopDir ? resolve(workshopDir) : null;
+    const downloadErrors = [];
+    if (!itemDir) {
+      const depotDownloader = join(toolsDir, "DepotDownloader");
+      if (existsSync(depotDownloader)) {
+        try {
+          await rm(depotItemDir, { recursive: true, force: true });
+          await run(depotDownloader, [
+            "-app",
+            STEAMCMD_APP_ID,
+            "-pubfile",
+            workshopId,
+            "-dir",
+            depotItemDir,
+          ]);
+          if (await hasVpk(depotItemDir)) itemDir = depotItemDir;
+          else downloadErrors.push("DepotDownloader: no .vpk downloaded");
+        } catch (error) {
+          downloadErrors.push(`DepotDownloader: ${error.message}`);
+        }
+      }
+    }
+    if (!itemDir) {
+      if (downloadErrors.length)
+        log(`${downloadErrors.join("; ")} — trying steamcmd`);
       await run(steamcmd, [
         "+force_install_dir",
         steamRoot,
@@ -336,20 +373,20 @@ export const convertMap = async ({
         workshopId,
         "+quit",
       ]);
-
-    // steamcmd resolves force_install_dir against its own prefix, so find the item
-    // rather than assuming where it landed.
-    const candidates = [
-      workshopContentDir(steamRoot, workshopId),
-      workshopContentDir(steamRoot.toLowerCase(), workshopId),
-    ];
-    const itemDir = workshopDir
-      ? resolve(workshopDir)
-      : candidates.find((dir) => existsSync(dir));
-    if (!itemDir) {
-      throw new Error(
-        `steamcmd reported success but no content directory was found. Looked in:\n  ${candidates.join("\n  ")}`,
-      );
+      // steamcmd resolves force_install_dir against its own prefix, so find the item
+      // rather than assuming where it landed.
+      const candidates = [
+        workshopContentDir(steamRoot, workshopId),
+        workshopContentDir(steamRoot.toLowerCase(), workshopId),
+      ];
+      itemDir = candidates.find((dir) => existsSync(dir));
+      if (!itemDir) {
+        throw new Error(
+          `the workshop item could not be downloaded. ${downloadErrors.join("; ")}` +
+            `${downloadErrors.length ? "; " : ""}steamcmd reported success but no ` +
+            `content directory was found. Looked in:\n  ${candidates.join("\n  ")}`,
+        );
+      }
     }
 
     // A workshop item is either one .vpk or a split archive, and a split one has to be
