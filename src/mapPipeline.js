@@ -27,9 +27,9 @@ import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { trimMap } from "./trimMap.js";
 import {
+  exporterLightmapUvConvention,
+  exporterRelease,
   readMapEnvironment,
-  VRF_19_2_REVISION,
-  VRF_RENDER_REFERENCE,
 } from "./mapEnvironment.js";
 import {
   fingerprintFile,
@@ -438,21 +438,23 @@ export const convertMap = async ({
     const { stdout: extractorVersion } = await run(cli, ["--version"]);
     if (!["auto", "source", "baked"].includes(exporterLightmapUvs))
       throw new Error("exporterLightmapUvs must be auto, source, or baked");
-    const knownSource = extractorVersion.includes(VRF_19_2_REVISION);
-    const knownBaked = extractorVersion.includes(VRF_RENDER_REFERENCE);
-    if (
-      exporterLightmapUvs === "auto" &&
-      !knownSource &&
-      !knownBaked &&
-      environment.lightmapUvScale.some((v) => v !== 1)
-    ) {
+    const convention = exporterLightmapUvConvention(extractorVersion);
+    const scaled = environment.lightmapUvScale.some((v) => v !== 1);
+    if (exporterLightmapUvs === "auto" && convention.bakes === null && scaled) {
       throw new Error(
-        "Unverified exporter lightmap UV convention. Use pinned Source2Viewer 19.2 or verify --exporter-lightmap-uvs source|baked against upstream.",
+        "Unverified exporter lightmap UV convention: Source2Viewer-CLI --version reported no release number. Verify --exporter-lightmap-uvs source|baked against upstream.",
+      );
+    }
+    if (exporterLightmapUvs === "auto" && !convention.verified && scaled) {
+      log(
+        `warning: Source2Viewer ${exporterRelease(extractorVersion)} is newer than ` +
+          `the last release whose lightmap UVs were checked; assuming it matches. ` +
+          `Run scripts/compare-lightmap-uvs.mjs and update LAST_VERIFIED_RELEASE.`,
       );
     }
     const exporterBakesUvScale =
       exporterLightmapUvs === "baked" ||
-      (exporterLightmapUvs === "auto" && !knownSource);
+      (exporterLightmapUvs === "auto" && convention.bakes === true);
     const sourceFingerprint = await fingerprintFile(innerVpk);
 
     // 3b. Which material every surface was built with.
@@ -506,7 +508,18 @@ export const convertMap = async ({
         : "exporting world geometry to glTF…",
     );
     const exportDir = containedPath(workDir, "export", mapName);
-    await rm(exportDir, { recursive: true, force: true });
+    // CLI 20.x writes a single -f match to the exact -o path plus extension, so the
+    // world lands beside exportDir as `<mapName>.glb` rather than inside it, with the
+    // collision mesh as `<mapName>_physics.glb`. Clear both layouts so a stale file
+    // can never be mistaken for this run's output.
+    const flatGlb = containedPath(workDir, "export", `${mapName}.glb`);
+    await Promise.all([
+      rm(exportDir, { recursive: true, force: true }),
+      rm(flatGlb, { force: true }),
+      rm(containedPath(workDir, "export", `${mapName}_physics.glb`), {
+        force: true,
+      }),
+    ]);
     await run(
       cli,
       [
@@ -526,10 +539,15 @@ export const convertMap = async ({
       BIG_OUTPUT,
     );
 
-    const raw = containedPath(exportDir, "maps", mapName, "world.glb");
+    // Older CLIs nest the world under the -o directory; 20.x writes it flat.
+    const nested = containedPath(exportDir, "maps", mapName, "world.glb");
+    const raw = existsSync(nested) ? nested : flatGlb;
     if (!existsSync(raw)) {
       throw new Error(`the exporter produced no world.glb for ${mapName}`);
     }
+    // The flat layout skips creating exportDir, but the trim and optimize steps
+    // still write their intermediates inside it.
+    await mkdir(exportDir, { recursive: true });
 
     // 3d. The map's real sky, written beside the .glb rather than into it: glTF has no
     // slot for a scene background, and the viewer wants it as an equirectangular image

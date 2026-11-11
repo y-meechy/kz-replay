@@ -13,8 +13,8 @@ RUN npm run build
 
 FROM --platform=linux/amd64 node:24-bookworm-slim@sha256:a09aabc645e86e81e23dab78e0c0f2eaa233cab4277c7188232181a1a8bd5d39 AS runtime
 
-ARG VALVE_RESOURCE_FORMAT_VERSION=19.2
-ARG VALVE_RESOURCE_FORMAT_SHA256=30d86dfd72bf35c8a38015c81bd92f0b04b1f49304e73a5d734c875803b2685b
+ARG VALVE_RESOURCE_FORMAT_VERSION=20.1
+ARG VALVE_RESOURCE_FORMAT_SHA256=29d25a6d6b62377fc5386c3e5145b0a2180a401a50041afe9494b3f503deaef5
 # Borrows the map's sky out of the CS2 content depot, anonymously and one archive part
 # at a time, so the image never needs a copy of the game. See src/cs2Content.js.
 ARG DEPOT_DOWNLOADER_VERSION=3.4.0

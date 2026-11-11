@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseEntityDump, environmentFromDumps } from "./mapEnvironment.js";
+import {
+  environmentFromDumps,
+  exporterLightmapUvConvention,
+  exporterRelease,
+  parseEntityDump,
+} from "./mapEnvironment.js";
+import { isNewerFormatError } from "./geometry.js";
 
 test("compiled UV scale overrides builder defaults; sunlight uses assigned shadow channel", () => {
   const world =
@@ -20,4 +26,46 @@ test("compiled UV scale overrides builder defaults; sunlight uses assigned shado
     ).sun,
     null,
   );
+});
+
+test("lightmap UV convention follows measured Source2Viewer releases", () => {
+  const version = (release, sha) =>
+    `Version: ${release}.6339+${sha}\nOS: Debian GNU/Linux 12 (bookworm) (X64)`;
+  assert.deepEqual(
+    exporterLightmapUvConvention(
+      version("19.2", "c72208352f5bf62f1482447ed166c548f303f8fa"),
+    ),
+    { bakes: false, verified: true },
+  );
+  assert.deepEqual(
+    exporterLightmapUvConvention(
+      version("20.1", "00c629d321171ad0b9be83994c5e9cb15e8c5bd9"),
+    ),
+    { bakes: true, verified: true },
+  );
+  assert.deepEqual(exporterLightmapUvConvention(version("20.1", "abc")), {
+    bakes: false,
+    verified: true,
+  });
+  // A newer release is assumed to match rather than stopping every conversion.
+  assert.deepEqual(exporterLightmapUvConvention(version("21.0", "abc")), {
+    bakes: false,
+    verified: false,
+  });
+  assert.deepEqual(exporterLightmapUvConvention("garbage"), {
+    bakes: null,
+    verified: false,
+  });
+  assert.equal(exporterRelease(version("20.1", "abc")), "20.1");
+  assert.equal(exporterRelease(""), null);
+});
+
+test("a map compiled by a newer Source 2 compiler is recognised", () => {
+  assert.equal(
+    isNewerFormatError(
+      "ValveResourceFormat.Utils.UnexpectedMagicException: Unknown KVType for variable 'datatype': 26 (0x1A)",
+    ),
+    true,
+  );
+  assert.equal(isNewerFormatError("the exporter produced no world.glb"), false);
 });
