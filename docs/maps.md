@@ -17,8 +17,8 @@ viewer. Do not bulk reconvert or deploy based on unit tests alone. See
 - Node 24 and `npm ci`.
 - SteamCMD for anonymous Workshop downloads, unless `--workshop-dir` points at an
   already downloaded Workshop item.
-- `tools/Source2Viewer-CLI`: tested converter 19.2, revision
-  `c72208352f5bf62f1482447ed166c548f303f8fa`.
+- `tools/Source2Viewer-CLI`: the release pinned in the Dockerfile (20.1). 19.2 still
+  works. 20.x writes a single-file glTF export flat beside `-o`; both layouts are read.
 - `tools/DepotDownloader` and `xz` for missing base-game assets.
 - KTX-Software 4.4.2 for GPU textures. The Dockerfile pins the Linux archive checksum.
   Default installation: `tools/KTX-Software-4.4.2-Linux-x86_64`. Set `KTX_TOKTX`
@@ -60,8 +60,10 @@ Three named profiles; every reduction is recorded in the manifest's `audit.dropp
 3. Extract compiled lighting metadata, light entities and the actual sky material.
 4. Repair verified exporter losses: source opacity for supported shaders, material
    extensions, and atlas UV scale for exporter revisions known not to bake it.
-   Unknown exporters with non-unit scale require an explicit
-   `--exporter-lightmap-uvs source|baked` choice.
+   Releases up to `LAST_VERIFIED_RELEASE` (`src/mapEnvironment.js`) were measured
+   not to bake it; a newer release is assumed to match and logs a warning until
+   `scripts/compare-lightmap-uvs.mjs` confirms it. `--exporter-lightmap-uvs
+source|baked` overrides the detection.
 5. Resize textures to the profile caps, encode colour to ETC1S and data maps to
    UASTC KTX2 with mipmaps, then pack geometry using meshopt. A later texture
    transform would decode meshopt again.
@@ -115,3 +117,11 @@ recover channels already discarded from their textures. The stable manifest uses
 `no-cache`; revision assets use immutable caching. Preserve representative old/new
 bundles until visual and performance results are convincing, then expand conversion
 deliberately. Do not replace production assets with an unmeasured batch.
+
+## When a new map will not convert
+
+Maps compiled after a Source 2 update can fail with `Unknown KVType` or another
+`UnexpectedMagicException`: the map is newer than Source2Viewer. The log says so in
+plain words. The `Source2Viewer update` workflow opens a pull request for each new
+release every Monday. Failed tries are counted per converter release, so merging
+that update retries every map that was given up on at the next nightly refresh.

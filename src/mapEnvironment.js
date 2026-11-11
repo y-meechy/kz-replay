@@ -5,6 +5,50 @@ import { runTool } from "./toolProcess.js";
 export const VRF_RENDER_REFERENCE = "00c629d321171ad0b9be83994c5e9cb15e8c5bd9";
 export const VRF_19_2_REVISION = "c72208352f5bf62f1482447ed166c548f303f8fa";
 
+/**
+ * The newest Source2Viewer release whose lightmap UVs were compared against 19.2's.
+ *
+ * Measured, not read from the changelog: upstream 64d7889 ("Scale gltf lightmap
+ * accessors by the uv scale") is in 20.0, yet the 20.1 glTF export of
+ * kz_sxb2_onlyslide (atlas scale 1.14284) carries exactly 19.2's unscaled UVs. Bump
+ * this after running scripts/compare-lightmap-uvs.mjs on a new release.
+ */
+export const LAST_VERIFIED_RELEASE = "20.1";
+
+/** "20.1" out of `Source2Viewer-CLI --version`, or null. */
+export const exporterRelease = (versionOutput) =>
+  /Version:\s*(\d+\.\d+)/.exec(versionOutput ?? "")?.[1] ?? null;
+
+const releaseNumber = (release) => {
+  const [major, minor] = release.split(".").map(Number);
+  return major * 1000 + minor;
+};
+
+/**
+ * Does this Source2Viewer-CLI already multiply lightmap UVs by the map's atlas scale?
+ *
+ * Only the pinned render reference is known to. Every release up to
+ * LAST_VERIFIED_RELEASE is known not to. A newer release is assumed to behave like the
+ * last verified one rather than refused: refusing stops every map conversion after a
+ * routine upgrade, while a wrong guess only misplaces baked light and is caught by
+ * the comparison script.
+ *
+ * @param versionOutput stdout of `Source2Viewer-CLI --version`
+ * @returns { bakes, verified } — bakes is null when the output carries no version
+ */
+export const exporterLightmapUvConvention = (versionOutput) => {
+  if (versionOutput.includes(VRF_19_2_REVISION))
+    return { bakes: false, verified: true };
+  if (versionOutput.includes(VRF_RENDER_REFERENCE))
+    return { bakes: true, verified: true };
+  const release = exporterRelease(versionOutput);
+  if (!release) return { bakes: null, verified: false };
+  return {
+    bakes: false,
+    verified: releaseNumber(release) <= releaseNumber(LAST_VERIFIED_RELEASE),
+  };
+};
+
 /** VRF's .vents text format separates entities with numbered ==== delimiters. */
 export const parseEntityDump = (text) =>
   text

@@ -18,8 +18,39 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { cleanupTemporaryGlb, convertMap, validateGlb } from "./mapPipeline.js";
 import { publishedGeometryPath } from "./mapAssets.js";
+import { exporterRelease } from "./mapEnvironment.js";
+import { runTool } from "./toolProcess.js";
 
 const MAX_ATTEMPTS = 3;
+
+/**
+ * Failed tries that count against a map with this converter.
+ *
+ * Most failures are the converter not understanding the map: Valve's compiler gains a
+ * new field type and every map built afterwards stops converting until Source2Viewer
+ * catches up. Counting tries per converter release means upgrading it retries every
+ * map that was given up on, without anyone resetting the manifest by hand.
+ */
+const attemptsWith = (entry, converter) =>
+  (entry?.converter ?? null) === converter ? (entry?.attempts ?? 0) : 0;
+
+/** Source2Viewer's message for a resource written by a newer Source 2 compiler. */
+export const isNewerFormatError = (message) =>
+  /UnexpectedMagicException|Unknown KVType|Unsupported (resource|KV3|block) version/i.test(
+    message,
+  );
+
+/** The converter release, e.g. "20.1", or null when the CLI is not installed. */
+const converterRelease = async (toolsDir) => {
+  const cli = join(toolsDir, "Source2Viewer-CLI");
+  if (!existsSync(cli)) return null;
+  try {
+    const { stdout } = await runTool(cli, ["--version"], { timeout: 60_000 });
+    return exporterRelease(stdout);
+  } catch {
+    return null;
+  }
+};
 
 const emptyManifest = () => ({ updatedAt: null, maps: {} });
 
@@ -141,6 +172,7 @@ export const convertPendingMaps = async ({
   log = () => {},
 }) => {
   const manifest = await readManifest(manifestPath);
+  const converter = await converterRelease(toolsDir);
   await mkdir(outputDir, { recursive: true });
   await Promise.all(
     maps.map((map) => cleanupTemporaryGlb(outputDir, map.name)),
@@ -165,7 +197,8 @@ export const convertPendingMaps = async ({
   )
     .filter((candidate) => candidate.reason !== null)
     .filter(
-      (candidate) => force || (candidate.entry?.attempts ?? 0) < MAX_ATTEMPTS,
+      (candidate) =>
+        force || attemptsWith(candidate.entry, converter) < MAX_ATTEMPTS,
     )
     // Newest approvals first: a map that has just appeared is the one people are
     // looking for, and it is also the one most likely to be missing.
@@ -174,12 +207,15 @@ export const convertPendingMaps = async ({
     );
 
   const givenUp = maps.filter(
-    (map) => (manifest.maps[map.name]?.attempts ?? 0) >= MAX_ATTEMPTS,
+    (map) => attemptsWith(manifest.maps[map.name], converter) >= MAX_ATTEMPTS,
   ).length;
 
   log(
     `${candidates.length} maps to convert` +
-      (givenUp ? `, ${givenUp} given up on after ${MAX_ATTEMPTS} tries` : ""),
+      (converter ? ` with Source2Viewer ${converter}` : "") +
+      (givenUp
+        ? `, ${givenUp} given up on after ${MAX_ATTEMPTS} tries with this converter`
+        : ""),
   );
 
   const deadline = Date.now() + budgetMs;
@@ -215,6 +251,7 @@ export const convertPendingMaps = async ({
         simplified: simplifyError !== null,
         convertedAt: new Date().toISOString(),
         seconds: Math.round((Date.now() - started) / 1000),
+        converter,
         attempts: 0,
         error: null,
       };
@@ -223,12 +260,25 @@ export const convertPendingMaps = async ({
     } catch (error) {
       manifest.maps[map.name] = {
         ...(manifest.maps[map.name] ?? {}),
-        attempts: (manifest.maps[map.name]?.attempts ?? 0) + 1,
+        attempts: attemptsWith(manifest.maps[map.name], converter) + 1,
+        converter,
         error: error.message,
         triedAt: new Date().toISOString(),
       };
-      result.failed.push({ name: map.name, error: error.message });
-      log(`  ${map.name}: failed — ${error.message}`);
+      const newerFormat = isNewerFormatError(error.message);
+      result.failed.push({
+        name: map.name,
+        error: error.message,
+        ...(newerFormat ? { newerFormat: true } : {}),
+      });
+      log(
+        newerFormat
+          ? `  ${map.name}: failed — the map uses a Source 2 format newer than ` +
+              `Source2Viewer ${converter ?? "(unknown version)"} can read. ` +
+              `Update VALVE_RESOURCE_FORMAT_VERSION in the Dockerfile; the map is ` +
+              `retried automatically once the converter changes.\n${error.message}`
+          : `  ${map.name}: failed — ${error.message}`,
+      );
     }
 
     // Written after every map, not at the end: a nightly run that is killed part
