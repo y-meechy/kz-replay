@@ -65,3 +65,38 @@ replaceable, and reseeded from the image on first boot, and the one number visit
 wrote must survive all three.
 
 The endpoints are listed in [api.md](api.md).
+
+## Water reflections (`?reflections=on`)
+
+Opt-in and off by default, so every map renders as before unless a link asks for it.
+`/watch?ids=<id>&reflections=on` swaps any surface whose _source_ material uses a
+Source 2 water shader (`csgo_water_fancy.vfx`, `csgo_water.vfx`, `water.vfx`, read from
+the `extras.vmat` the exporter keeps) for a screen-space-reflection water material. Nothing
+is chosen by colour or name. Polished concrete with `F_SPECULAR_INDIRECT`, metals and
+puddle blends are left alone. The parameter sticks to the URL while you change cameras,
+and `?reflections=off` (or leaving it out) gives the matching "before" frame.
+
+How it works (`viewer/src/mapReflections.js`): when a water surface is in the camera
+frustum, the scene without the water is drawn once into a half-resolution linear
+half-float target with a depth texture. The water shader ray-marches that colour and
+depth in view space, with binary refinement. It fades hits out at screen edges, at long
+range and for rays aimed back at the camera, and falls back to the sky (the scene
+background, sampled with its own rotation) wherever the ray misses. The same target
+gives the refracted bed under the surface, absorbed by depth towards the authored
+`g_vWaterFogColor`. The water itself is still drawn in the normal canvas pass, so native
+MSAA, ACES tone mapping and the baked lighting on every other surface are unchanged.
+
+A full-screen SSRPass was not used. This renderer is forward-only and draws straight to the
+canvas. A post chain would move every map into a float target with its own resolve
+and output transform, and it would still have no G-buffer saying which pixels may
+reflect.
+
+Limits: the export does not carry the water's normal/foam/caustic textures or the map's
+cubemaps, so waves are procedural, the miss fallback is the sky rather than
+`env_cubemap`, and the water body's light level is a tuned constant. Off-screen
+geometry cannot be reflected (inherent to SSR). With the water in view, the pre-pass draws
+the map's geometry a second time at half resolution.
+
+On kz_bhop_majka (`materials/water/watercustomm.vmat`) the "off" frame shows the lake
+as a red slab: the exporter copied the shader's `g_vColorTint` into the glTF base colour.
+Nobody has compared this against matched CS2 screenshots, so it is not a claim of parity.

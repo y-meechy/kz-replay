@@ -17,6 +17,7 @@ import { resolveMapAssets, legacySidecarUrl } from "./mapAssets.js";
 import { loadHdrSky } from "./mapSky.js";
 import { loadPublishedIrradiance } from "./mapIrradiance.js";
 import { createMapLoader } from "./mapLoader.js";
+import { createScreenSpaceReflections } from "./mapReflections.js";
 import { findJumps, jumpAtTick } from "./jumps.js";
 import {
   analyseTeleports,
@@ -258,6 +259,9 @@ export const createPlayer = ({
   onFrame,
   trimTeleports = false,
   mode = "vanilla",
+  // "on" draws authored Source 2 water with screen-space reflections. Off by default so
+  // every map renders exactly as before unless a link asks (?reflections=on).
+  reflections: reflectionMode = "off",
 }) => {
   const renderer = new THREE.WebGLRenderer({
     canvas,
@@ -283,6 +287,9 @@ export const createPlayer = ({
   // at 0.40 with 0.2% of it blown out and 0.1% near black — a daylight level with the
   // highlights and the shadows both still readable. 1.4 starts clipping the sky.
   renderer.toneMappingExposure = 1.15;
+
+  const reflections =
+    reflectionMode === "on" ? createScreenSpaceReflections(renderer) : null;
 
   const gpu = gpuName(renderer);
   if (isSoftwareRenderer(gpu)) {
@@ -639,6 +646,11 @@ export const createPlayer = ({
   scene.add(mapGroup);
 
   const hasMapLoaded = () => mapGroup.children.length > 0;
+  const isInMapGroup = (object) => {
+    for (let node = object; node; node = node.parent)
+      if (node === mapGroup) return true;
+    return false;
+  };
 
   // Sky above, near black bounce below, so up-facing surfaces read brighter than
   // walls and the level's shape is legible without any textures.
@@ -908,6 +920,8 @@ export const createPlayer = ({
               // separately; importing punctual lights here would double that light.
               const importedLights = [];
               const importedMaterials = new Set();
+              const sun =
+                assets.revision?.converter?.settings?.environment?.sun;
               gltf.scene.traverse((object) => {
                 if (object.isLight) {
                   importedLights.push(object);
@@ -920,6 +934,13 @@ export const createPlayer = ({
                 const adopt = (material) => {
                   if (!material) return mapMaterial;
                   importedMaterials.add(material);
+                  // Chosen by the source shader, so the water never joins the baked
+                  // light candidates: its look comes from the reflection pass instead.
+                  const water = reflections?.adopt(object, material, {
+                    root: gltf.scene,
+                    sun,
+                  });
+                  if (water) return water;
                   const adopted = mapMaterials.adopt(
                     material,
                     object.geometry.hasAttribute("uv1") &&
@@ -981,6 +1002,7 @@ export const createPlayer = ({
               const abandon = () => {
                 mapMaterials.release(ownedMaterials);
                 disposeMapScene(gltf.scene);
+                reflections?.retain(isInMapGroup);
               };
 
               const finish = async () => {
@@ -1021,6 +1043,12 @@ export const createPlayer = ({
                         renderer.compileAsync(gltf.scene, camera, scene),
                         cancelled,
                       ]);
+                      if (reflections?.count) {
+                        await Promise.race([
+                          reflections.compileAsync(gltf.scene, camera, scene),
+                          cancelled,
+                        ]);
+                      }
                     } catch {
                       // Compilation is an optimisation. A driver that cannot precompile
                       // can still compile lazily on the first rendered frame.
@@ -1038,6 +1066,7 @@ export const createPlayer = ({
                     mapGroup.clear();
                   }
                   mapGroup.add(gltf.scene);
+                  reflections?.retain(isInMapGroup);
                   attached = true;
                   loadedAssets = assets;
                   activeMapMaterials = ownedMaterials;
@@ -1567,6 +1596,8 @@ export const createPlayer = ({
 
     updateCamera(playbackTime, delta);
     resize();
+    // Wave phase follows the replay clock, so a paused frame is reproducible.
+    reflections?.update(scene, camera, playbackTime);
     renderer.render(scene, camera);
 
     const hudTrack = activeTrack();
@@ -1713,6 +1744,7 @@ export const createPlayer = ({
      * only readable in the same tick as the draw.
      */
     sampleBrightness: () => {
+      reflections?.update(scene, camera, playbackTime);
       renderer.render(scene, camera);
       const gl = renderer.getContext();
       const width = gl.drawingBufferWidth;
@@ -1785,6 +1817,12 @@ export const createPlayer = ({
         irradiance: loadedAssets?.runtimeIrradiance ?? null,
         cameraFar: camera.far,
         fog: scene.fog && { near: scene.fog.near, far: scene.fog.far },
+        reflections: {
+          mode: reflections ? "on" : "off",
+          surfaces: reflections?.count ?? 0,
+          active: reflections?.active ?? false,
+          target: reflections?.targetSize ?? null,
+        },
       };
     },
     setMapVisible: (visible) => {
@@ -1870,6 +1908,7 @@ export const createPlayer = ({
       disposeMapScene(mapGroup);
       mapGroup.clear();
       mapMaterial.dispose();
+      reflections?.dispose();
       renderer.dispose();
       scene.background?.dispose?.();
       scene.traverse((object) => {
