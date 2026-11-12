@@ -67,9 +67,6 @@ export const reflectiveSurfaceOf = (userData) => {
       8,
     ),
     ssrBrightness: Math.max(0, finite(floats.g_flSSRBrightness, 1)),
-    // The surface colour CS2 shows for this water; the exporter also wrote it to the
-    // glTF base colour, which is why the "off" frame is already this colour.
-    tint: colour(vectors.g_vColorTint, [1, 1, 1]),
     fogColor: colour(vectors.g_vWaterFogColor, [0.2, 0.45, 0.55]),
     fogStrength: Math.max(0, finite(floats.g_flWaterFogStrength, 0.5)),
     maxDepth: Math.max(1, finite(floats.g_flWaterMaxDepth, 100)),
@@ -115,7 +112,7 @@ uniform bool kzHasEnv;
 uniform mat3 kzEnvRotation;
 uniform vec3 kzEnvFallback;
 uniform float kzTime;
-uniform vec3 kzTint;
+uniform vec3 kzFogColor;
 uniform float kzReflectance;
 uniform float kzFresnelExponent;
 uniform float kzSsrBrightness;
@@ -220,7 +217,8 @@ vec4 kzTrace(vec3 origin, vec3 dir) {
 `;
 
 // Runs after <opaque_fragment>, so gl_FragColor already holds the unchanged "off"
-// surface: g_vColorTint as albedo, lit by the baked lightmap and sun-shadow mask.
+// surface: the water body colour from sourceShading.js, lit by the baked lightmap and
+// sun-shadow mask.
 const fragmentBody = /* glsl */ `
 {
   vec3 kzViewPos = -vViewPosition;
@@ -242,10 +240,9 @@ const fragmentBody = /* glsl */ `
 
   vec3 kzSurface = gl_FragColor.rgb;
   if (kzSsrEnabled) {
-    // Shallow water shows its bed, coloured by the water's own tint; with depth the
-    // authored surface takes over (g_flWaterFogStrength over g_flWaterMaxDepth).
-    // g_vWaterFogColor is not used as the colour here: on majka it is cyan under a red
-    // surface, and mixing it in drew cyan fringes along every shoreline.
+    // Shallow water shows its bed through g_vWaterFogColor; with depth the lit water
+    // body (the same fog colour, see sourceShading.js) takes over, at the authored
+    // g_flWaterFogStrength over g_flWaterMaxDepth.
     vec2 kzScreenUv = gl_FragCoord.xy / kzViewport;
     vec2 kzRefractedUv = clamp(kzScreenUv + kzViewNormal.xy * 0.03, 0.001, 0.999);
     float kzDepth;
@@ -257,16 +254,15 @@ const fragmentBody = /* glsl */ `
     }
     float kzThickness = kzDepth >= 0.99999 ? 1e6 : max(kzViewPos.z - kzSceneZ, 0.0);
     float kzAbsorbed = 1.0 - exp(-kzThickness * kzFogStrength * 3.0 / kzMaxDepth);
-    vec3 kzBed = texture2D(kzSceneColor, kzRefractedUv).rgb * kzTint;
+    vec3 kzBed = texture2D(kzSceneColor, kzRefractedUv).rgb * kzFogColor;
     kzSurface = mix(kzBed, kzSurface, kzAbsorbed);
   }
 
   vec3 kzHalf = normalize(kzWaterSunDirection + kzWorldView);
   float kzSpecular = pow(max(dot(kzNormal, kzHalf), 0.0), kzSpecularPower)
     * step(0.0, kzWaterSunDirection.y) * KZ_SUN_VISIBILITY;
-  // The reflection is tinted by g_vColorTint as well, so the authored red surface stays
-  // red at grazing angles instead of turning into a sky-coloured mirror.
-  gl_FragColor.rgb = mix(kzSurface, kzReflection * kzTint, kzFresnel)
+  // A dielectric reflection is not tinted. csgo_water_fancy never reads g_vColorTint.
+  gl_FragColor.rgb = mix(kzSurface, kzReflection, kzFresnel)
     + kzWaterSunColor * kzSpecular;
 }
 `;
@@ -285,7 +281,10 @@ const uniformsFor = (surface, sunDirection, sun) => ({
   kzEnvRotation: { value: new THREE.Matrix3() },
   kzEnvFallback: { value: new THREE.Color(0.18, 0.26, 0.36) },
   kzTime: { value: 0 },
-  kzTint: { value: new THREE.Color(...surface.tint) },
+  // sRGB-picked in the material editor, like the fallback base colour.
+  kzFogColor: {
+    value: new THREE.Color().setRGB(...surface.fogColor, THREE.SRGBColorSpace),
+  },
   kzReflectance: { value: surface.reflectance },
   kzFresnelExponent: { value: surface.fresnelExponent },
   kzSsrBrightness: { value: surface.ssrBrightness },
@@ -310,9 +309,9 @@ const uniformsFor = (surface, sunDirection, sun) => ({
 /**
  * Add reflections to the viewer's own material for authored water, in place.
  *
- * Decorating rather than replacing keeps everything the "off" frame has — the exporter's
- * base colour (g_vColorTint), the baked lightmap and the sun-shadow mask attached later by
- * configureLightmapEncoding, which chains onto this hook — and only adds to it.
+ * Decorating rather than replacing keeps everything the "off" frame has — the corrected
+ * water body colour (sourceShading.js), the baked lightmap and the sun-shadow mask attached
+ * later by configureLightmapEncoding, which chains onto this hook — and only adds to it.
  */
 export const decorateWaterMaterial = (
   material,

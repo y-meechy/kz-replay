@@ -52,8 +52,8 @@ test("majka's water is selected from its source shader and parameters", () => {
   assert.equal(surface.fresnelExponent, 5);
   assert.deepEqual(surface.fogColor, [0.262745, 0.815686, 1]);
   assert.equal(surface.maxDepth, 100);
-  // Majka's water is authored red; CS2 shows it red, so it stays the surface colour.
-  assert.deepEqual(surface.tint, [1, 0, 0]);
+  // g_vColorTint is never read by csgo_water_fancy's pixel shader, so it is not carried.
+  assert.equal("tint" in surface, false);
   assert.deepEqual(surface.sourceSsr, {
     maxForwardSteps: 15,
     stepSize: 0.2,
@@ -118,15 +118,15 @@ const compileWith = (material) => {
   return shader;
 };
 
-test("water keeps its lit red material and gains reflections on top", () => {
+test("water keeps its lit material and gains untinted reflections on top", () => {
   const surface = reflectiveSurfaceOf(majkaWater);
-  const material = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+  const material = new THREE.MeshStandardMaterial({ color: 0x4488ff });
   decorateWaterMaterial(material, surface, {
     sun: { direction: [0, 2, 0], color: [1, 1, 1] },
   });
   // Same material, same base colour: the "off" surface is the starting point.
   assert.ok(material.isMeshStandardMaterial);
-  assert.deepEqual(material.color.toArray(), [1, 0, 0]);
+  assert.equal(material.color.getHexString(), "4488ff");
   const shader = compileWith(material);
   const body = shader.fragmentShader;
   // Spliced after the lit surface is final and before ACES/sRGB output.
@@ -138,12 +138,17 @@ test("water keeps its lit red material and gains reflections on top", () => {
     body.indexOf("kzTrace(kzViewPos") <
       body.indexOf("#include <tonemapping_fragment>"),
   );
-  assert.match(body, /kzReflection \* kzTint/);
-  // Shallow water shows its bed through the authored tint, not the cyan fog colour.
-  assert.match(body, /kzSceneColor, kzRefractedUv\)\.rgb \* kzTint/);
+  assert.match(body, /mix\(kzSurface, kzReflection, kzFresnel\)/);
+  assert.doesNotMatch(body, /kzTint/);
+  // Shallow water shows its bed through g_vWaterFogColor.
+  assert.match(body, /kzSceneColor, kzRefractedUv\)\.rgb \* kzFogColor/);
   // Without baked sun shadows the glint is not gated.
   assert.match(body, /#define KZ_SUN_VISIBILITY 1\.0/);
-  assert.deepEqual(shader.uniforms.kzTint.value.toArray(), [1, 0, 0]);
+  // 0.262745 / 0.815686 / 1 picked in sRGB, uploaded linear.
+  assert.equal(
+    shader.uniforms.kzFogColor.value.getHexString(THREE.SRGBColorSpace),
+    "43d0ff",
+  );
   assert.equal(shader.uniforms.kzReflectance.value, 0.025);
   assert.equal(shader.uniforms.kzSsrEnabled.value, false);
   assert.deepEqual(
@@ -157,7 +162,7 @@ test("water keeps its lit red material and gains reflections on top", () => {
 });
 
 test("the baked lightmap still attaches to decorated water", () => {
-  const material = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+  const material = new THREE.MeshStandardMaterial({ color: 0x4488ff });
   decorateWaterMaterial(material, reflectiveSurfaceOf(majkaWater));
   configureLightmapEncoding(material, {
     encoding: "rgbm8-linear",
@@ -211,7 +216,7 @@ test("the pass adopts only water, skips work off-screen and frees its target", (
   const rockAdopted = rockMaterial.clone();
   assert.equal(ssr.decorate(rock, rockMaterial, rockAdopted), false);
   assert.equal(rockAdopted.userData.kzSsrUniforms, undefined);
-  const sourceWater = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+  const sourceWater = new THREE.MeshStandardMaterial({ color: 0x4488ff });
   sourceWater.userData = majkaWater;
   plane.material = sourceWater.clone();
   assert.equal(
