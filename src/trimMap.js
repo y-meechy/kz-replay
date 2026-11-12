@@ -442,6 +442,10 @@ export const trimMap = async ({
               effect ? EFFECT_ALPHA : 1,
             ),
           );
+          // The vertex colour belonged to a shader nobody can see any more, and for
+          // CS2 foliage it is animation data (green unused), which tinted the guessed
+          // green of kz_bhop_majka's taro and palm plants purple. Never a tint here.
+          primitive.setAttribute("COLOR_0", null);
           untexturedSurfaces += 1;
         }
       } else if (materialNames) {
