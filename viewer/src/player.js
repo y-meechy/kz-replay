@@ -935,6 +935,24 @@ export const createPlayer = ({
                   return;
                 }
                 if (!object.isMesh) return;
+                // The exporter includes Source's moondome mesh but cannot express
+                // its cubemap shader in glTF. Its untextured grey surface otherwise
+                // covers the real sky extracted into the versioned sidecar.
+                const sourceMaterials = Array.isArray(object.material)
+                  ? object.material
+                  : [object.material];
+                if (
+                  assets.files?.sky &&
+                  sourceMaterials.length > 0 &&
+                  sourceMaterials.every(
+                    (material) =>
+                      material?.userData?.vmat?.ShaderName ===
+                      "csgo_moondome.vfx",
+                  )
+                ) {
+                  object.visible = false;
+                  return;
+                }
                 // A coloured map arrives with a flat colour per surface, worked out from
                 // the material the mapper used. Keep those and only match them to the
                 // scene's lighting; a map with none still gets the plain concrete.
