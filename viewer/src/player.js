@@ -934,13 +934,6 @@ export const createPlayer = ({
                 const adopt = (material) => {
                   if (!material) return mapMaterial;
                   importedMaterials.add(material);
-                  // Chosen by the source shader, so the water never joins the baked
-                  // light candidates: its look comes from the reflection pass instead.
-                  const water = reflections?.adopt(object, material, {
-                    root: gltf.scene,
-                    sun,
-                  });
-                  if (water) return water;
                   const adopted = mapMaterials.adopt(
                     material,
                     object.geometry.hasAttribute("uv1") &&
@@ -950,6 +943,12 @@ export const createPlayer = ({
                     ownedMaterials,
                     { hasNormals: object.geometry.hasAttribute("normal") },
                   );
+                  // Chosen by the source shader. The water keeps this lit material,
+                  // baked light included, and only gains reflections on top.
+                  reflections?.decorate(object, material, adopted, {
+                    root: gltf.scene,
+                    sun,
+                  });
                   for (const slot of [
                     "map",
                     "normalMap",

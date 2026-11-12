@@ -10,11 +10,11 @@ import * as THREE from "three";
 // this forward renderer does not have, so it could not know *which* pixels may reflect.
 //
 // Instead, when a water surface is in view, the scene minus the water is drawn once into
-// a reduced-resolution linear HDR target with a depth texture. The water's own material
-// ray-marches that colour and depth in view space, fades the result towards the sky at
-// screen edges, at long distances and for rays heading back at the camera, and is then
-// drawn in the normal canvas pass — so it is multisampled and tone-mapped exactly like
-// every other surface. Maps without a water source material pay nothing.
+// a reduced-resolution linear HDR target with a depth texture. The water keeps the
+// viewer's ordinary lit material and gains a ray-march of that colour and depth in view
+// space, faded towards the sky at screen edges, at long distances and for rays heading
+// back at the camera. It is still drawn in the normal canvas pass, so it is multisampled
+// and tone-mapped exactly like every other surface. Maps without water pay nothing.
 
 /** `?reflections=on` opts in. Anything else keeps the established renderer. */
 export const parseReflectionMode = (value) =>
@@ -67,6 +67,9 @@ export const reflectiveSurfaceOf = (userData) => {
       8,
     ),
     ssrBrightness: Math.max(0, finite(floats.g_flSSRBrightness, 1)),
+    // The surface colour CS2 shows for this water; the exporter also wrote it to the
+    // glTF base colour, which is why the "off" frame is already this colour.
+    tint: colour(vectors.g_vColorTint, [1, 1, 1]),
     fogColor: colour(vectors.g_vWaterFogColor, [0.2, 0.45, 0.55]),
     fogStrength: Math.max(0, finite(floats.g_flWaterFogStrength, 0.5)),
     maxDepth: Math.max(1, finite(floats.g_flWaterMaxDepth, 100)),
@@ -97,27 +100,13 @@ export const reflectiveSurfaceOf = (userData) => {
 const MAX_STEPS = 48;
 const REFINE_STEPS = 6;
 
-const vertexShader = /* glsl */ `
-varying vec3 vWorldPosition;
-varying vec3 vViewPosition;
-varying vec3 vWorldNormal;
-void main() {
-  vec4 world = modelMatrix * vec4(position, 1.0);
-  vWorldPosition = world.xyz;
-  vWorldNormal = normalize(mat3(modelMatrix) * normal);
-  vec4 view = viewMatrix * world;
-  vViewPosition = view.xyz;
-  gl_Position = projectionMatrix * view;
-}
-`;
-
-const fragmentShader = /* glsl */ `
-#include <common>
-#include <packing>
+// Declarations spliced in front of MeshStandardMaterial's main().
+const fragmentHeader = /* glsl */ `
 uniform sampler2D kzSceneColor;
 uniform sampler2D kzSceneDepth;
 uniform bool kzSsrEnabled;
 uniform mat4 kzProjection;
+uniform mat4 kzViewInverse;
 uniform float kzNear;
 uniform float kzFar;
 uniform vec2 kzViewport;
@@ -126,25 +115,21 @@ uniform bool kzHasEnv;
 uniform mat3 kzEnvRotation;
 uniform vec3 kzEnvFallback;
 uniform float kzTime;
+uniform vec3 kzTint;
 uniform float kzReflectance;
 uniform float kzFresnelExponent;
 uniform float kzSsrBrightness;
-uniform vec3 kzFogColor;
 uniform float kzFogStrength;
 uniform float kzMaxDepth;
-uniform float kzBodyLight;
 uniform float kzSpecularPower;
-uniform vec3 kzSunDirection;
-uniform vec3 kzSunColor;
+uniform vec3 kzWaterSunDirection;
+uniform vec3 kzWaterSunColor;
 uniform float kzWaveDirection;
 uniform float kzWaveSpeed;
 uniform float kzWaveStrength;
 uniform int kzWaveIterations;
 uniform float kzEdgeFade;
 uniform float kzMaxDistance;
-varying vec3 vWorldPosition;
-varying vec3 vViewPosition;
-varying vec3 vWorldNormal;
 
 vec2 kzProject(vec3 p) {
   vec4 clip = kzProjection * vec4(p, 1.0);
@@ -232,99 +217,136 @@ vec4 kzTrace(vec3 origin, vec3 dir) {
   }
   return vec4(0.0);
 }
+`;
 
-void main() {
-  vec3 worldNormal = kzWaveNormal(normalize(vWorldNormal), vWorldPosition.xz);
-  vec3 viewNormal = normalize(mat3(viewMatrix) * worldNormal);
-  vec3 viewDir = normalize(-vViewPosition);
-  vec3 worldView = normalize(cameraPosition - vWorldPosition);
-  float nDotV = clamp(dot(worldNormal, worldView), 0.0, 1.0);
-  float fresnel = kzReflectance +
-    (1.0 - kzReflectance) * pow(1.0 - nDotV, kzFresnelExponent);
+// Runs after <opaque_fragment>, so gl_FragColor already holds the unchanged "off"
+// surface: g_vColorTint as albedo, lit by the baked lightmap and sun-shadow mask.
+const fragmentBody = /* glsl */ `
+{
+  vec3 kzViewPos = -vViewPosition;
+  vec3 kzWorldPos = (kzViewInverse * vec4(kzViewPos, 1.0)).xyz;
+  vec3 kzPlaneNormal = inverseTransformDirection(nonPerturbedNormal, viewMatrix);
+  vec3 kzNormal = kzWaveNormal(kzPlaneNormal, kzWorldPos.xz);
+  vec3 kzViewNormal = normalize((viewMatrix * vec4(kzNormal, 0.0)).xyz);
+  vec3 kzWorldView = normalize(cameraPosition - kzWorldPos);
+  float kzNDotV = clamp(dot(kzNormal, kzWorldView), 0.0, 1.0);
+  float kzFresnel = kzReflectance +
+    (1.0 - kzReflectance) * pow(1.0 - kzNDotV, kzFresnelExponent);
 
-  vec3 reflected = reflect(-viewDir, viewNormal);
-  vec3 worldReflected = reflect(-worldView, worldNormal);
+  vec3 kzWorldReflected = reflect(-kzWorldView, kzNormal);
   // Never reflect below the water plane: a wave normal can tilt the ray downward.
-  worldReflected.y = abs(worldReflected.y);
-  vec3 sky = kzSky(worldReflected);
-  vec4 traced = kzTrace(vViewPosition, reflected);
-  vec3 reflection = mix(sky, traced.rgb * kzSsrBrightness, traced.a);
+  kzWorldReflected.y = abs(kzWorldReflected.y);
+  vec3 kzViewReflected = normalize((viewMatrix * vec4(kzWorldReflected, 0.0)).xyz);
+  vec4 kzTraced = kzTrace(kzViewPos, kzViewReflected);
+  vec3 kzReflection = mix(kzSky(kzWorldReflected), kzTraced.rgb * kzSsrBrightness, kzTraced.a);
 
-  // Water body: what is under the surface, behind depth-based absorption.
-  vec2 screenUv = gl_FragCoord.xy / kzViewport;
-  vec3 body = kzFogColor * kzBodyLight;
+  vec3 kzSurface = gl_FragColor.rgb;
   if (kzSsrEnabled) {
-    vec2 refractedUv = clamp(screenUv + viewNormal.xy * 0.03, 0.001, 0.999);
-    float depth;
-    float sceneZ = kzViewZ(refractedUv, depth);
-    // Something in front of the water at the offset pixel would bleed in; undo the offset.
-    if (sceneZ > vViewPosition.z) {
-      refractedUv = screenUv;
-      sceneZ = kzViewZ(refractedUv, depth);
+    // Shallow water shows its bed, coloured by the water's own tint; with depth the
+    // authored surface takes over (g_flWaterFogStrength over g_flWaterMaxDepth).
+    // g_vWaterFogColor is not used as the colour here: on majka it is cyan under a red
+    // surface, and mixing it in drew cyan fringes along every shoreline.
+    vec2 kzScreenUv = gl_FragCoord.xy / kzViewport;
+    vec2 kzRefractedUv = clamp(kzScreenUv + kzViewNormal.xy * 0.03, 0.001, 0.999);
+    float kzDepth;
+    float kzSceneZ = kzViewZ(kzRefractedUv, kzDepth);
+    // Something in front of the water at the offset pixel would bleed in; undo it.
+    if (kzSceneZ > kzViewPos.z) {
+      kzRefractedUv = kzScreenUv;
+      kzSceneZ = kzViewZ(kzRefractedUv, kzDepth);
     }
-    float thickness = depth >= 0.99999 ? 1e6 : max(vViewPosition.z - sceneZ, 0.0);
-    float absorbed = 1.0 - exp(-thickness * kzFogStrength * 3.0 / kzMaxDepth);
-    body = mix(texture2D(kzSceneColor, refractedUv).rgb, body, absorbed);
+    float kzThickness = kzDepth >= 0.99999 ? 1e6 : max(kzViewPos.z - kzSceneZ, 0.0);
+    float kzAbsorbed = 1.0 - exp(-kzThickness * kzFogStrength * 3.0 / kzMaxDepth);
+    vec3 kzBed = texture2D(kzSceneColor, kzRefractedUv).rgb * kzTint;
+    kzSurface = mix(kzBed, kzSurface, kzAbsorbed);
   }
 
-  vec3 halfVector = normalize(kzSunDirection + worldView);
-  float specular = pow(max(dot(worldNormal, halfVector), 0.0), kzSpecularPower)
-    * step(0.0, kzSunDirection.y);
-
-  gl_FragColor = vec4(mix(body, reflection, fresnel) + kzSunColor * specular, 1.0);
-  #include <tonemapping_fragment>
-  #include <colorspace_fragment>
+  vec3 kzHalf = normalize(kzWaterSunDirection + kzWorldView);
+  float kzSpecular = pow(max(dot(kzNormal, kzHalf), 0.0), kzSpecularPower)
+    * step(0.0, kzWaterSunDirection.y) * KZ_SUN_VISIBILITY;
+  // The reflection is tinted by g_vColorTint as well, so the authored red surface stays
+  // red at grazing angles instead of turning into a sky-coloured mirror.
+  gl_FragColor.rgb = mix(kzSurface, kzReflection * kzTint, kzFresnel)
+    + kzWaterSunColor * kzSpecular;
 }
 `;
 
-/** One material per authored water material; its uniforms are fed by the SSR pass. */
-export const createWaterMaterial = (surface, { sun = null } = {}) => {
+const uniformsFor = (surface, sunDirection, sun) => ({
+  kzSceneColor: { value: null },
+  kzSceneDepth: { value: null },
+  kzSsrEnabled: { value: false },
+  kzProjection: { value: new THREE.Matrix4() },
+  kzViewInverse: { value: new THREE.Matrix4() },
+  kzNear: { value: 1 },
+  kzFar: { value: 1000 },
+  kzViewport: { value: new THREE.Vector2(1, 1) },
+  kzEnv: { value: null },
+  kzHasEnv: { value: false },
+  kzEnvRotation: { value: new THREE.Matrix3() },
+  kzEnvFallback: { value: new THREE.Color(0.18, 0.26, 0.36) },
+  kzTime: { value: 0 },
+  kzTint: { value: new THREE.Color(...surface.tint) },
+  kzReflectance: { value: surface.reflectance },
+  kzFresnelExponent: { value: surface.fresnelExponent },
+  kzSsrBrightness: { value: surface.ssrBrightness },
+  kzFogStrength: { value: surface.fogStrength },
+  kzMaxDepth: { value: surface.maxDepth },
+  kzSpecularPower: { value: surface.specularPower },
+  // GLB space; rotated into the map group's world frame by the pass.
+  kzWaterSunDirection: { value: sunDirection.clone() },
+  kzWaterSunColor: {
+    value: new THREE.Color(...(sun?.color ?? [1, 1, 1])).multiplyScalar(
+      sun ? 4 : 0,
+    ),
+  },
+  kzWaveDirection: { value: surface.waveDirection },
+  kzWaveSpeed: { value: surface.waveSpeed },
+  kzWaveStrength: { value: surface.waveNormalStrength * 0.35 },
+  kzWaveIterations: { value: surface.waveIterations },
+  kzEdgeFade: { value: 0.1 },
+  kzMaxDistance: { value: 16000 },
+});
+
+/**
+ * Add reflections to the viewer's own material for authored water, in place.
+ *
+ * Decorating rather than replacing keeps everything the "off" frame has — the exporter's
+ * base colour (g_vColorTint), the baked lightmap and the sun-shadow mask attached later by
+ * configureLightmapEncoding, which chains onto this hook — and only adds to it.
+ */
+export const decorateWaterMaterial = (
+  material,
+  surface,
+  { sun = null } = {},
+) => {
+  if (material.userData.kzSsrUniforms) return material;
   const sunDirection = new THREE.Vector3(...(sun?.direction ?? [0, 1, 0]));
   if (sunDirection.lengthSq() === 0) sunDirection.set(0, 1, 0);
-  const material = new THREE.ShaderMaterial({
-    name: `kz-ssr-water:${surface.material ?? "water"}`,
-    vertexShader,
-    fragmentShader,
-    uniforms: {
-      kzSceneColor: { value: null },
-      kzSceneDepth: { value: null },
-      kzSsrEnabled: { value: false },
-      kzProjection: { value: new THREE.Matrix4() },
-      kzNear: { value: 1 },
-      kzFar: { value: 1000 },
-      kzViewport: { value: new THREE.Vector2(1, 1) },
-      kzEnv: { value: null },
-      kzHasEnv: { value: false },
-      kzEnvRotation: { value: new THREE.Matrix3() },
-      kzEnvFallback: { value: new THREE.Color(0.18, 0.26, 0.36) },
-      kzTime: { value: 0 },
-      kzReflectance: { value: surface.reflectance },
-      kzFresnelExponent: { value: surface.fresnelExponent },
-      kzSsrBrightness: { value: surface.ssrBrightness },
-      kzFogColor: { value: new THREE.Color(...surface.fogColor) },
-      kzFogStrength: { value: surface.fogStrength },
-      kzMaxDepth: { value: surface.maxDepth },
-      // Not authored: CS2 lights the water volume from its probes, which the export does
-      // not carry. Tuned so open water reads as lit, not as the fog colour at full white.
-      kzBodyLight: { value: 0.22 },
-      kzSpecularPower: { value: surface.specularPower },
-      // GLB space; rotated into the map group's world frame by the pass.
-      kzSunDirection: { value: sunDirection.normalize() },
-      kzSunColor: {
-        value: new THREE.Color(...(sun?.color ?? [1, 1, 1])).multiplyScalar(
-          sun ? 4 : 0,
-        ),
-      },
-      kzWaveDirection: { value: surface.waveDirection },
-      kzWaveSpeed: { value: surface.waveSpeed },
-      kzWaveStrength: { value: surface.waveNormalStrength * 0.35 },
-      kzWaveIterations: { value: surface.waveIterations },
-      kzEdgeFade: { value: 0.1 },
-      kzMaxDistance: { value: 16000 },
-    },
-  });
+  sunDirection.normalize();
+  const uniforms = uniformsFor(surface, sunDirection, sun);
+  const previousCompile = material.onBeforeCompile;
+  const previousKey = material.customProgramCacheKey();
+  material.onBeforeCompile = function (shader, renderer) {
+    previousCompile.call(this, shader, renderer);
+    Object.assign(shader.uniforms, uniforms);
+    // configureLightmapEncoding runs after this hook and declares the baked sun-shadow
+    // visibility it computes; a glint must not shine out of a baked shadow.
+    const visibility = this.kzShadowMap ? "kzVisibility" : "1.0";
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "void main() {",
+        `${fragmentHeader}\n#define KZ_SUN_VISIBILITY ${visibility}\nvoid main() {`,
+      )
+      .replace(
+        "#include <opaque_fragment>",
+        `#include <opaque_fragment>\n${fragmentBody}`,
+      );
+  };
+  material.customProgramCacheKey = () => `${previousKey}:kz-ssr-water-v2`;
+  material.userData.kzSsrUniforms = uniforms;
   material.userData.kzReflectiveSurface = surface;
-  material.userData.kzSunDirectionLocal = sunDirection.clone();
+  material.userData.kzWaterSunDirectionLocal = sunDirection;
+  material.needsUpdate = true;
   return material;
 };
 
@@ -402,11 +424,12 @@ export const createScreenSpaceReflections = (
   };
 
   const feed = (mesh, camera, scene, time, ssrOn) => {
-    const { uniforms } = mesh.material;
+    const uniforms = mesh.material.userData.kzSsrUniforms;
     uniforms.kzSsrEnabled.value = ssrOn;
     uniforms.kzSceneColor.value = ssrOn ? target.texture : null;
     uniforms.kzSceneDepth.value = ssrOn ? target.depthTexture : null;
     uniforms.kzProjection.value.copy(camera.projectionMatrix);
+    uniforms.kzViewInverse.value.copy(camera.matrixWorld);
     uniforms.kzNear.value = camera.near;
     uniforms.kzFar.value = camera.far;
     renderer.getDrawingBufferSize(uniforms.kzViewport.value);
@@ -424,21 +447,24 @@ export const createScreenSpaceReflections = (
       quaternion,
     );
     sunWorld
-      .copy(mesh.material.userData.kzSunDirectionLocal)
+      .copy(mesh.material.userData.kzWaterSunDirectionLocal)
       .applyQuaternion(quaternion)
       .normalize();
-    uniforms.kzSunDirection.value.copy(sunWorld);
+    uniforms.kzWaterSunDirection.value.copy(sunWorld);
   };
 
   return {
-    /** Swap a mesh's material for authored water. Returns the material, or null. */
-    adopt(mesh, sourceMaterial, { root = null, ...options } = {}) {
+    /**
+     * Give authored water reflections. `material` is the viewer's adopted material for
+     * the mesh; anything that is not a water source material is left untouched.
+     */
+    decorate(mesh, sourceMaterial, material, { root = null, ...options } = {}) {
       const surface = reflectiveSurfaceOf(sourceMaterial?.userData);
-      if (!surface) return null;
-      const material = createWaterMaterial(surface, options);
+      if (!surface || !material?.isMeshStandardMaterial) return false;
+      decorateWaterMaterial(material, surface, options);
       if (root) mesh.userData.kzReflectionRoot = root;
       surfaces.add(mesh);
-      return material;
+      return true;
     },
     /** Forget meshes that were removed with a map generation. */
     retain(predicate) {
