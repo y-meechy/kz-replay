@@ -45,7 +45,8 @@ Three named profiles; every reduction is recorded in the manifest's `audit.dropp
   exporter-private and unreferenced UV sets dropped (Three derives tangents in
   the shader); the lighting atlas at the compiler's authored 4096 mip, whose
   native BC6H blocks ship unchanged, with the RGBM fallback and shadow atlas as
-  lossless WebP; the HDR sky box-filtered to 2048×1024 half-float EXR.
+  lossless WebP; an HDR sky box-filtered to 2048×1024 half-float EXR, or an
+  8-bit cubemap sky resampled to a 2048×1024 sRGB WebP without grading.
 - `fidelity` retains source resolution and every stream. Use it for comparison
   captures, not for publication. File size never triggers simplification.
 - `legacy` explicitly selects the old geometry/texture reductions; it does **not**

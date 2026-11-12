@@ -8,8 +8,19 @@ import { EXRLoader } from "three/addons/loaders/EXRLoader.js";
 import { downsampleExr } from "./hdrImage.js";
 import { cs2IndexPath } from "./cs2Content.js";
 import { runTool as run } from "./toolProcess.js";
+import { CUBE_FACES, cubeToEquirect } from "./skyCube.js";
+import sharp from "sharp";
 
 const BIG_OUTPUT = { maxBuffer: 64 * 1024 * 1024 };
+
+/**
+ * The `skyname` in one decompiled entity lump, in either form the decompiler writes:
+ * `skyname "materials/skybox/x.vmat"`, or, from newer compilers (kz_bhop_majka),
+ * `skyname resource_name:"materials/skybox/x.vmat"`. Missing the second form is why
+ * majka shipped with no sky at all.
+ */
+export const skyNameFromEntities = (text) =>
+  /skyname\s+(?:resource_name:)?"([^"]+\.vmat)"/i.exec(text)?.[1] ?? null;
 
 /**
  * The sky material a map asks for.
@@ -48,8 +59,8 @@ export const readSkyName = async ({
     for (const file of files) {
       if (!file.endsWith(".vents")) continue;
       const text = await readFile(join(entityDir, file), "latin1");
-      const match = /skyname\s+"([^"]+\.vmat)"/i.exec(text);
-      if (match) return match[1];
+      const skyName = skyNameFromEntities(text);
+      if (skyName) return skyName;
     }
     return null;
   } finally {
@@ -90,6 +101,43 @@ export const readCompiledSkyTexture = (text) => {
       text,
     );
   return match?.[1] ?? null;
+};
+
+/**
+ * Six sRGB cube faces as one equirectangular WebP, in the viewer's world frame.
+ * The pixels are the mapper's own; nothing is tone-mapped or graded.
+ */
+const ldrCubeSky = async ({ facePaths, skyName, size, material, log }) => {
+  const faces = {};
+  for (const [index, face] of CUBE_FACES.entries()) {
+    const { data, info } = await sharp(facePaths[index])
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    if (info.width !== info.height)
+      throw new Error(`Sky face ${face} of ${skyName} is not square`);
+    faces[face] = { data: new Uint8Array(data), size: info.width };
+  }
+  const native = faces.rt.size * 4;
+  const width = size ? Math.min(size, native) : native;
+  const equirect = cubeToEquirect(faces, width - (width % 2));
+  const webp = await sharp(Buffer.from(equirect.data), {
+    raw: { width: equirect.width, height: equirect.height, channels: 3 },
+  })
+    .webp({ quality: 90 })
+    .toBuffer();
+  log(
+    `sky ${skyName}: 8-bit cubemap as ${equirect.width}×${equirect.height} WebP, ${(webp.length / 1024).toFixed(0)} KB`,
+  );
+  return {
+    webp,
+    width: equirect.width,
+    height: equirect.height,
+    encoding: "srgb8",
+    projection: "equirectangular",
+    material,
+    sun: null,
+  };
 };
 
 /**
@@ -159,13 +207,19 @@ export const buildSky = async ({
       BIG_OUTPUT,
     );
 
+    const material = readSkyMaterial(materialData);
     const exrPath = join(dumpDir, `${textureBase}.exr`);
     if (!existsSync(exrPath)) {
+      // An 8-bit cubemap decodes to six faces instead of one HDR latlong.
+      const facePaths = CUBE_FACES.map((face) =>
+        join(dumpDir, `${textureBase}_${face}.png`),
+      );
+      if (facePaths.every((path) => existsSync(path))) {
+        return await ldrCubeSky({ facePaths, skyName, size, material, log });
+      }
       log(`the sky ${skyName} is not in the CS2 cache, keeping the gradient`);
       return null;
     }
-
-    const material = readSkyMaterial(materialData);
 
     let file = await readFile(exrPath);
     let { width, height } = new EXRLoader().parse(

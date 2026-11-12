@@ -764,7 +764,14 @@ export const createPlayer = ({
       ? legacySidecarUrl(mapUrl, ".sky.webp")
       : assets.files.sky?.url;
     if (!url) return;
-    if (assets.files?.sky?.encoding === "exr-linear") {
+    const skyEncoding = assets.files?.sky?.encoding;
+    if (
+      !assets.legacy &&
+      !["exr-linear", "srgb8", "srgb8-tonemapped"].includes(skyEncoding)
+    ) {
+      throw new Error(`Unsupported sky encoding: ${skyEncoding}`);
+    }
+    if (skyEncoding === "exr-linear") {
       const skyAsset = await loadHdrSky(url, assets.files.sky);
       if (!isCurrent()) {
         skyAsset.dispose();

@@ -992,8 +992,9 @@ export const convertMap = async ({
                   }
                 : {
                     mediaType: "image/webp",
-                    encoding: "srgb8-tonemapped",
-                    projection: "equirectangular",
+                    // srgb8: an 8-bit source sky, resampled but not graded (skyCube.js).
+                    encoding: sky.encoding ?? "srgb8-tonemapped",
+                    projection: sky.projection ?? "equirectangular",
                     width: sky.width,
                     height: sky.height,
                   },
