@@ -935,9 +935,10 @@ export const createPlayer = ({
                   return;
                 }
                 if (!object.isMesh) return;
-                // The exporter includes Source's moondome mesh but cannot express
-                // its cubemap shader in glTF. Its untextured grey surface otherwise
-                // covers the real sky extracted into the versioned sidecar.
+                // Source's moondome paints the sky on geometry that also hides
+                // other rooms. The exporter cannot express its cubemap shader in
+                // glTF. A depth-only material leaves the already-drawn background
+                // sky visible while retaining that room-to-room occlusion.
                 const sourceMaterials = Array.isArray(object.material)
                   ? object.material
                   : [object.material];
@@ -950,7 +951,13 @@ export const createPlayer = ({
                       "csgo_moondome.vfx",
                   )
                 ) {
-                  object.visible = false;
+                  const skyMask = new THREE.MeshBasicMaterial({
+                    colorWrite: false,
+                    depthWrite: true,
+                    side: THREE.DoubleSide,
+                  });
+                  ownedMaterials.add(skyMask);
+                  object.material = skyMask;
                   return;
                 }
                 // A coloured map arrives with a flat colour per surface, worked out from

@@ -108,6 +108,13 @@ self-illumination mask. It reuses the exported colour texture as emissive albedo
 when the mask itself was not exported. Other mask textures are still unsupported;
 this is material glow, not bloom or light cast onto nearby geometry.
 
+Majka's large `hr_aztec_blend_groundgrass01-groundrock04` surface remains a
+separate export gap: its source material names a rock colour texture, a grass
+colour texture and `g_tBlendModulation`, but the glTF retains only the rock
+layer and its affected primitives have no `COLOR_0` blend weights. Recolouring
+the rock would not reconstruct the authored grass placement; conversion needs
+the missing textures and Source's blend rule.
+
 ## Water reflections (`?reflections=on`)
 
 Opt-in and off by default, so every map renders as before unless a link asks for it.
@@ -150,5 +157,7 @@ On kz_bhop_majka (`materials/water/watercustomm.vmat`) both frames now show blue
 water. "Off" is the lit fog colour, and "on" adds reflections, Fresnel and shoreline
 depth. Nobody has compared this against camera-matched CS2 screenshots, so it is not a
 claim of parity. The CS2 reference is also a darker night scene: Majka's sky is a
-`csgo_moondome.vfx` model whose cubemap the export does not carry (`files.sky` is null),
-so the viewer still shows its default sky.
+`csgo_moondome.vfx` model. When an extracted sky sidecar is present, the viewer
+draws its geometry into depth only: the sky remains visible, but the dome still
+occludes the other rooms behind it. Maps without a sky sidecar retain the
+exported material.
