@@ -17,6 +17,7 @@ import { resolveMapAssets, legacySidecarUrl } from "./mapAssets.js";
 import { loadHdrSky } from "./mapSky.js";
 import { loadPublishedIrradiance } from "./mapIrradiance.js";
 import { createMapLoader } from "./mapLoader.js";
+import { createScreenSpaceReflections } from "./mapReflections.js";
 import { findJumps, jumpAtTick } from "./jumps.js";
 import {
   analyseTeleports,
@@ -258,6 +259,9 @@ export const createPlayer = ({
   onFrame,
   trimTeleports = false,
   mode = "vanilla",
+  // "on" draws authored Source 2 water with screen-space reflections. Off by default so
+  // every map renders exactly as before unless a link asks (?reflections=on).
+  reflections: reflectionMode = "off",
 }) => {
   const renderer = new THREE.WebGLRenderer({
     canvas,
@@ -283,6 +287,9 @@ export const createPlayer = ({
   // at 0.40 with 0.2% of it blown out and 0.1% near black — a daylight level with the
   // highlights and the shadows both still readable. 1.4 starts clipping the sky.
   renderer.toneMappingExposure = 1.15;
+
+  const reflections =
+    reflectionMode === "on" ? createScreenSpaceReflections(renderer) : null;
 
   const gpu = gpuName(renderer);
   if (isSoftwareRenderer(gpu)) {
@@ -639,6 +646,11 @@ export const createPlayer = ({
   scene.add(mapGroup);
 
   const hasMapLoaded = () => mapGroup.children.length > 0;
+  const isInMapGroup = (object) => {
+    for (let node = object; node; node = node.parent)
+      if (node === mapGroup) return true;
+    return false;
+  };
 
   // Sky above, near black bounce below, so up-facing surfaces read brighter than
   // walls and the level's shape is legible without any textures.
@@ -752,7 +764,14 @@ export const createPlayer = ({
       ? legacySidecarUrl(mapUrl, ".sky.webp")
       : assets.files.sky?.url;
     if (!url) return;
-    if (assets.files?.sky?.encoding === "exr-linear") {
+    const skyEncoding = assets.files?.sky?.encoding;
+    if (
+      !assets.legacy &&
+      !["exr-linear", "srgb8", "srgb8-tonemapped"].includes(skyEncoding)
+    ) {
+      throw new Error(`Unsupported sky encoding: ${skyEncoding}`);
+    }
+    if (skyEncoding === "exr-linear") {
       const skyAsset = await loadHdrSky(url, assets.files.sky);
       if (!isCurrent()) {
         skyAsset.dispose();
@@ -908,12 +927,39 @@ export const createPlayer = ({
               // separately; importing punctual lights here would double that light.
               const importedLights = [];
               const importedMaterials = new Set();
+              const sun =
+                assets.revision?.converter?.settings?.environment?.sun;
               gltf.scene.traverse((object) => {
                 if (object.isLight) {
                   importedLights.push(object);
                   return;
                 }
                 if (!object.isMesh) return;
+                // Source's moondome paints the sky on geometry that also hides
+                // other rooms. The exporter cannot express its cubemap shader in
+                // glTF. A depth-only material leaves the already-drawn background
+                // sky visible while retaining that room-to-room occlusion.
+                const sourceMaterials = Array.isArray(object.material)
+                  ? object.material
+                  : [object.material];
+                if (
+                  assets.files?.sky &&
+                  sourceMaterials.length > 0 &&
+                  sourceMaterials.every(
+                    (material) =>
+                      material?.userData?.vmat?.ShaderName ===
+                      "csgo_moondome.vfx",
+                  )
+                ) {
+                  const skyMask = new THREE.MeshBasicMaterial({
+                    colorWrite: false,
+                    depthWrite: true,
+                    side: THREE.DoubleSide,
+                  });
+                  ownedMaterials.add(skyMask);
+                  object.material = skyMask;
+                  return;
+                }
                 // A coloured map arrives with a flat colour per surface, worked out from
                 // the material the mapper used. Keep those and only match them to the
                 // scene's lighting; a map with none still gets the plain concrete.
@@ -929,6 +975,12 @@ export const createPlayer = ({
                     ownedMaterials,
                     { hasNormals: object.geometry.hasAttribute("normal") },
                   );
+                  // Chosen by the source shader. The water keeps this lit material,
+                  // baked light included, and only gains reflections on top.
+                  reflections?.decorate(object, material, adopted, {
+                    root: gltf.scene,
+                    sun,
+                  });
                   for (const slot of [
                     "map",
                     "normalMap",
@@ -981,6 +1033,7 @@ export const createPlayer = ({
               const abandon = () => {
                 mapMaterials.release(ownedMaterials);
                 disposeMapScene(gltf.scene);
+                reflections?.retain(isInMapGroup);
               };
 
               const finish = async () => {
@@ -1021,6 +1074,12 @@ export const createPlayer = ({
                         renderer.compileAsync(gltf.scene, camera, scene),
                         cancelled,
                       ]);
+                      if (reflections?.count) {
+                        await Promise.race([
+                          reflections.compileAsync(gltf.scene, camera, scene),
+                          cancelled,
+                        ]);
+                      }
                     } catch {
                       // Compilation is an optimisation. A driver that cannot precompile
                       // can still compile lazily on the first rendered frame.
@@ -1038,6 +1097,7 @@ export const createPlayer = ({
                     mapGroup.clear();
                   }
                   mapGroup.add(gltf.scene);
+                  reflections?.retain(isInMapGroup);
                   attached = true;
                   loadedAssets = assets;
                   activeMapMaterials = ownedMaterials;
@@ -1567,6 +1627,8 @@ export const createPlayer = ({
 
     updateCamera(playbackTime, delta);
     resize();
+    // Wave phase follows the replay clock, so a paused frame is reproducible.
+    reflections?.update(scene, camera, playbackTime);
     renderer.render(scene, camera);
 
     const hudTrack = activeTrack();
@@ -1713,6 +1775,7 @@ export const createPlayer = ({
      * only readable in the same tick as the draw.
      */
     sampleBrightness: () => {
+      reflections?.update(scene, camera, playbackTime);
       renderer.render(scene, camera);
       const gl = renderer.getContext();
       const width = gl.drawingBufferWidth;
@@ -1785,6 +1848,12 @@ export const createPlayer = ({
         irradiance: loadedAssets?.runtimeIrradiance ?? null,
         cameraFar: camera.far,
         fog: scene.fog && { near: scene.fog.near, far: scene.fog.far },
+        reflections: {
+          mode: reflections ? "on" : "off",
+          surfaces: reflections?.count ?? 0,
+          active: reflections?.active ?? false,
+          target: reflections?.targetSize ?? null,
+        },
       };
     },
     setMapVisible: (visible) => {
@@ -1870,6 +1939,7 @@ export const createPlayer = ({
       disposeMapScene(mapGroup);
       mapGroup.clear();
       mapMaterial.dispose();
+      reflections?.dispose();
       renderer.dispose();
       scene.background?.dispose?.();
       scene.traverse((object) => {

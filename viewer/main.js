@@ -18,6 +18,7 @@
 import { decodeTrack } from "../src/track.js";
 import { timeAtDistance } from "../src/compare.js";
 import { createPlayer } from "./src/player.js";
+import { parseReflectionMode } from "./src/mapReflections.js";
 import { loadRunById, parseRecordIds } from "./src/loadRun.js";
 import { buildInsights } from "./src/insights.js";
 import { createAnalysisPanel } from "./src/analysisPanel.js";
@@ -60,11 +61,18 @@ const DEFAULT_VIEW = "pov";
  */
 const MAX_RUNS = 2;
 
+const currentReflectionMode = () =>
+  parseReflectionMode(
+    new URLSearchParams(window.location.search).get("reflections"),
+  );
+
 const watchUrl = (ids, view = DEFAULT_VIEW, notice = null) => {
   const params = new URLSearchParams({ ids: ids.join(",") });
   // Left out when it is the default, so the common link stays short.
   if (view !== DEFAULT_VIEW) params.set("view", view);
   if (notice) params.set("notice", notice);
+  // Sticky while browsing so a before/after comparison survives camera changes.
+  if (currentReflectionMode() === "on") params.set("reflections", "on");
   // URLSearchParams escapes the separator to %2C. A comma is legal unescaped in a
   // query string, and `ids=a,b` is the shape the docs promise and the shape someone
   // reads back off their address bar, so put it back.
@@ -819,6 +827,7 @@ const openRun = async (
       // How the runner stands: CS2KZ hands out a USP in classic and a knife in vanilla, and
       // the two are posed differently.
       mode: run.meta.mode,
+      reflections: currentReflectionMode(),
     });
     if (import.meta.env.DEV) window.__kzPlayer = player;
 

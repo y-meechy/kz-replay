@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { configureLightmapEncoding } from "./mapLighting.js";
 import { BC6H_ENCODING } from "../../src/bc6hTexture.js";
+import { correctSourceMaterial } from "./sourceShading.js";
 
 // Geometry-only exports carry the atlas in the base-colour slot on UV0.
 const BAKED_LIGHT_MATERIAL_NAME = /^kz_[0-9a-f]{6}_lit$/;
@@ -17,6 +18,9 @@ export const createMapMaterials = (lightMapIntensity) => {
         // Never mutate the source: a later variant must start without the first
         // variant's lightmap or changes to its base-colour texture.
         adopted = material.clone();
+        // What the source shader really does with vertex colour and tint; see
+        // sourceShading.js. Applies to the clone, so the import stays untouched.
+        correctSourceMaterial(adopted);
         if (!hasNormals && adopted.isMeshStandardMaterial)
           adopted.flatShading = true;
         if (adopted.map && BAKED_LIGHT_MATERIAL_NAME.test(adopted.name)) {

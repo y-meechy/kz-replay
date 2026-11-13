@@ -75,6 +75,50 @@ test("fidelity conversion preserves foliage, source material/extension, tangents
   assert(p.getMaterial().getExtension("KHR_materials_unlit"));
 });
 
+test("a fallback colour surface does not keep the vertex colour of its lost material", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "kz-fallback-colour-"));
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const attribute = (type, values) =>
+    doc
+      .createAccessor()
+      .setType(type)
+      .setArray(new Float32Array(values))
+      .setBuffer(buffer);
+  // kz_bhop_majka: a base-game plant whose material the workshop item does not ship,
+  // carrying CS2 foliage vertex data (green channel unused).
+  const primitive = doc
+    .createPrimitive()
+    .setAttribute("POSITION", attribute("VEC3", [0, 0, 0, 1, 0, 0, 0, 1, 0]))
+    .setAttribute("NORMAL", attribute("VEC3", new Array(9).fill(1)))
+    .setAttribute(
+      "COLOR_0",
+      attribute("VEC4", [0.4, 0, 0.6, 1, 0.4, 0, 0.6, 1, 0.4, 0, 0.6, 1]),
+    );
+  doc
+    .createScene()
+    .addChild(
+      doc
+        .createNode("taro_leaf_plant_1")
+        .setMesh(doc.createMesh("taro_leaf_plant_1").addPrimitive(primitive)),
+    );
+  const io = new NodeIO().registerExtensions(ALL_EXTENSIONS);
+  await io.write(join(dir, "raw.glb"), doc);
+  const report = await trimMap({
+    input: join(dir, "raw.glb"),
+    output: join(dir, "trim.glb"),
+    attributePolicy: "web",
+    withTextures: true,
+  });
+  assert.equal(report.untexturedSurfaces, 1);
+  const p = (await io.read(join(dir, "trim.glb")))
+    .getRoot()
+    .listMeshes()[0]
+    .listPrimitives()[0];
+  assert.match(p.getMaterial().getName(), /^kz_[0-9a-f]{6}$/);
+  assert.equal(p.getAttribute("COLOR_0"), null);
+});
+
 test("immutable publication preserves old assets and never retains stale sidecars", async () => {
   const dir = await mkdtemp(join(tmpdir(), "kz-fidelity-publish-"));
   const sourcePath = join(dir, "input.bin");
