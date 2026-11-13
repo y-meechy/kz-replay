@@ -102,8 +102,11 @@ shader. Everything else is unchanged. In particular, kz_bhop_majka's far `ancien
 plants (`foliage02`, `acaciajakke`, `csgo_complex.vfx`) stay blue: their per-instance
 object tint is baked into the glTF base colour, and `csgo_complex` applies object tint
 through `g_flModelTintAmount` (shader default 1, set to 1 here), so CS2 tints them too. They
-self-illuminate in CS2 (`g_flSelfIllumBrightness` 2), and the viewer does not reproduce
-that glow.
+self-illuminate in CS2 (`g_flSelfIllumBrightness` 2). The viewer now applies that
+authored brightness and tint where the Source material uses Majka's shared white
+self-illumination mask. It reuses the exported colour texture as emissive albedo
+when the mask itself was not exported. Other mask textures are still unsupported;
+this is material glow, not bloom or light cast onto nearby geometry.
 
 ## Water reflections (`?reflections=on`)
 

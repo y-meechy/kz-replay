@@ -68,6 +68,38 @@ test("foliage vertex colour is animation data, not albedo", () => {
   assert.equal(material.color.getHexString(), "ffffff");
 });
 
+test("Majka's cyan self-illuminated material keeps its authored glow", () => {
+  const material = imported(
+    {
+      ShaderName: "csgo_complex.vfx",
+      IntParams: { F_SELF_ILLUM: 1 },
+      FloatParams: { g_flSelfIllumBrightness: 1.09 },
+      VectorParams: { g_vSelfIllumTint: [0.439216, 0.803922, 1, 1] },
+      TextureParams: {
+        g_tSelfIllumMask:
+          "materials/cyanneon_vmat_g_tselfillummask_ff155607.vtex",
+      },
+    },
+    0x43cfff,
+  );
+  const map = new THREE.Texture();
+  material.map = map;
+  const shading = correctSourceMaterial(material);
+  assert.equal(shading.selfIllum.brightness, 1.09);
+  assert.equal(material.emissiveIntensity, 1.09);
+  assert.ok(material.emissive.b > material.emissive.r);
+  assert.equal(material.emissiveMap, map);
+});
+
+test("unflagged complex materials are not made emissive", () => {
+  const material = imported({
+    ShaderName: "csgo_complex.vfx",
+    FloatParams: { g_flSelfIllumBrightness: 2 },
+  });
+  assert.equal(correctSourceMaterial(material), null);
+  assert.equal(material.emissive.getHexString(), "000000");
+});
+
 test("foliage that enables vertex AO keeps only the alpha channel", () => {
   const material = imported(underbrushCards);
   correctSourceMaterial(material);

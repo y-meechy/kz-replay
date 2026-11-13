@@ -30,6 +30,7 @@ const FALLBACK_PALETTE = /^kz_[0-9a-f]{6}$/;
 
 const FOLIAGE = "csgo_foliage.vfx";
 const WATER_FANCY = "csgo_water_fancy.vfx";
+const COMPLEX = "csgo_complex.vfx";
 
 const shaderOf = (vmat) =>
   typeof vmat?.ShaderName === "string"
@@ -84,6 +85,28 @@ export const sourceShadingOf = (vmat, materialName = "") => {
     );
     return { shader, baseColor: baseColor.toArray() };
   }
+  if (shader === COMPLEX && vmat.IntParams?.F_SELF_ILLUM === 1) {
+    const brightness = finite(floats.g_flSelfIllumBrightness, 0);
+    const tint = vmat.VectorParams?.g_vSelfIllumTint;
+    const mask = vmat.TextureParams?.g_tSelfIllumMask;
+    if (
+      brightness > 0 &&
+      mask?.endsWith("_ff155607.vtex") &&
+      Array.isArray(tint) &&
+      tint.slice(0, 3).every(Number.isFinite)
+    ) {
+      return {
+        shader,
+        selfIllum: {
+          brightness,
+          tint: tint
+            .slice(0, 3)
+            .map((value) => THREE.MathUtils.clamp(value, 0, 1)),
+          mask,
+        },
+      };
+    }
+  }
   return null;
 };
 
@@ -96,6 +119,24 @@ export const correctSourceMaterial = (material) => {
   const shading = sourceShadingOf(material?.userData?.vmat, material?.name);
   if (!shading || !material.isMeshStandardMaterial) return null;
   if (shading.baseColor) material.color.fromArray(shading.baseColor);
+  if (shading.selfIllum) {
+    const { brightness, tint, mask } = shading.selfIllum;
+    // The exported base colour already contains the model tint. Source's self-lit
+    // albedo uses that same colour, while its authored mask decides where it glows.
+    material.emissive
+      .copy(material.color)
+      .multiply(new THREE.Color().setRGB(...tint, THREE.SRGBColorSpace));
+    material.emissiveIntensity = brightness;
+    // A missing exported emissive channel cannot be reconstructed from its path.
+    // The map's shared ff155607 mask is the all-white mask: use the existing
+    // colour texture as the illuminated albedo, retaining its cutouts/details.
+    if (
+      !material.emissiveMap &&
+      mask?.endsWith("_ff155607.vtex") &&
+      material.map
+    )
+      material.emissiveMap = material.map;
+  }
   if (shading.ignoreVertexColor && material.vertexColors) {
     if (shading.vertexAo) {
       // Keep the attribute bound so its alpha can be read, but never as a tint.
